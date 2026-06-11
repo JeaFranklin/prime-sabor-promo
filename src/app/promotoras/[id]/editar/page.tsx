@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 
@@ -32,37 +32,75 @@ function formatarCPF(v: string): string {
     .replace(/(\d{3})(\d{1,2})$/, '$1-$2')
 }
 
-export default function NovaPromotora() {
+function calcularIdade(data: string): number | null {
+  if (!data) return null
+  const nasc = new Date(data)
+  const hoje = new Date()
+  let idade = hoje.getFullYear() - nasc.getFullYear()
+  const m = hoje.getMonth() - nasc.getMonth()
+  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade--
+  return idade
+}
+
+export default function EditarPromotora() {
+  const { id } = useParams()
   const router = useRouter()
+  const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
   const [cpfErro, setCpfErro] = useState('')
   const [geocodificando, setGeocodificando] = useState(false)
   const [coordenadas, setCoordenadas] = useState<{ lat: number; lng: number } | null>(null)
-  const [form, setForm] = useState({
-    nome: '',
-    whatsapp: '',
-    cpf: '',
-    email: '',
-    instagram: '',
-    rua: '',
-    numero: '',
-    bairro: '',
-    cep: '',
-    cidade: '',
-    estado: '',
-    chave_pix: '',
-    banco: '',
-    observacoes: '',
-    tamanho_uniforme: '',
-    consentimento_lgpd: false,
-  })
+  const [fotoAtualUrl, setFotoAtualUrl] = useState<string | null>(null)
+  const [fotoPreview, setFotoPreview] = useState<string | null>(null)
+  const [fotoFile, setFotoFile] = useState<File | null>(null)
   const [dataNasc, setDataNasc] = useState('')
   const [servicos, setServicos] = useState<string[]>([])
   const [diasDisponivel, setDiasDisponivel] = useState<string[]>([])
-  const [turno, setTurno] = useState('')
-  const [fotoPreview, setFotoPreview] = useState<string | null>(null)
-  const [fotoFile, setFotoFile] = useState<File | null>(null)
+  const [form, setForm] = useState({
+    nome: '', whatsapp: '', cpf: '', email: '', instagram: '',
+    rua: '', numero: '', bairro: '', cep: '', cidade: '', estado: '',
+    chave_pix: '', banco: '', observacoes: '', status: 'ativo',
+    tamanho_uniforme: '', disponibilidade_turno: '',
+  })
+
+  useEffect(() => {
+    async function carregar() {
+      const { data, error } = await supabase
+        .from('promotoras')
+        .select('*')
+        .eq('id', id)
+        .single()
+      if (error) { console.error(error); setCarregando(false); return }
+      const p = data
+      setForm({
+        nome: p.nome || '',
+        whatsapp: p.whatsapp || '',
+        cpf: p.cpf || '',
+        email: p.email || '',
+        instagram: p.instagram || '',
+        rua: p.rua || '',
+        numero: p.numero || '',
+        bairro: p.bairro || '',
+        cep: p.cep || '',
+        cidade: p.cidade || '',
+        estado: p.estado || '',
+        chave_pix: p.chave_pix || '',
+        banco: p.banco || '',
+        observacoes: p.observacoes || '',
+        status: p.status || 'ativo',
+        tamanho_uniforme: p.tamanho_uniforme || '',
+        disponibilidade_turno: p.disponibilidade_turno || '',
+      })
+      setDataNasc(p.data_nascimento || '')
+      setServicos(p.servicos || [])
+      setDiasDisponivel(p.disponibilidade_dias || [])
+      setFotoAtualUrl(p.foto_url || null)
+      if (p.lat && p.lng) setCoordenadas({ lat: p.lat, lng: p.lng })
+      setCarregando(false)
+    }
+    if (id) carregar()
+  }, [id])
 
   function handleFoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -74,16 +112,6 @@ export default function NovaPromotora() {
     reader.readAsDataURL(file)
   }
 
-  function calcularIdade(data: string): number | null {
-    if (!data) return null
-    const nasc = new Date(data)
-    const hoje = new Date()
-    let idade = hoje.getFullYear() - nasc.getFullYear()
-    const m = hoje.getMonth() - nasc.getMonth()
-    if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade--
-    return idade
-  }
-
   function toggleServico(s: string) {
     setServicos(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
   }
@@ -92,7 +120,7 @@ export default function NovaPromotora() {
     setDiasDisponivel(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])
   }
 
-  function atualizar(campo: string, valor: string | boolean) {
+  function atualizar(campo: string, valor: string) {
     setForm(prev => ({ ...prev, [campo]: valor }))
   }
 
@@ -109,10 +137,7 @@ export default function NovaPromotora() {
 
   async function geocodificarEndereco() {
     const { rua, numero, bairro, cidade, estado } = form
-    if (!rua || !cidade) {
-      setErro('Preencha pelo menos Rua e Cidade para buscar a localização.')
-      return
-    }
+    if (!rua || !cidade) { setErro('Preencha pelo menos Rua e Cidade para buscar a localização.'); return }
     setGeocodificando(true)
     setErro('')
     const enderecoCompleto = `${rua}, ${numero}, ${bairro}, ${cidade}, ${estado}, Brasil`
@@ -134,13 +159,12 @@ export default function NovaPromotora() {
   async function salvar() {
     if (!form.nome.trim()) { setErro('Nome é obrigatório.'); return }
     if (form.cpf && !validarCPF(form.cpf.replace(/\D/g, ''))) { setErro('CPF inválido.'); return }
-    if (!form.consentimento_lgpd) { setErro('É necessário aceitar o termo LGPD.'); return }
     if (servicos.length === 0) { setErro('Selecione pelo menos um tipo de serviço.'); return }
 
     setSalvando(true)
     setErro('')
 
-    let foto_url = null
+    let foto_url = fotoAtualUrl
     if (fotoFile) {
       const ext = fotoFile.name.split('.').pop()
       const nomeArquivo = `promotoras/${Date.now()}.${ext}`
@@ -154,34 +178,60 @@ export default function NovaPromotora() {
       }
     }
 
-    const { error } = await supabase.from('promotoras').insert({
-      ...form,
-      data_nascimento: dataNasc || null,
-      servicos,
-      disponibilidade_dias: diasDisponivel,
-      disponibilidade_turno: turno || null,
-      status: 'ativo',
-      lat: coordenadas?.lat || null,
-      lng: coordenadas?.lng || null,
-      foto_url,
-    })
+    const { error } = await supabase
+      .from('promotoras')
+      .update({
+        ...form,
+        data_nascimento: dataNasc || null,
+        servicos,
+        disponibilidade_dias: diasDisponivel,
+        lat: coordenadas?.lat || null,
+        lng: coordenadas?.lng || null,
+        foto_url,
+      })
+      .eq('id', id)
 
     setSalvando(false)
     if (error) setErro('Erro ao salvar: ' + error.message)
-    else router.push('/promotoras')
+    else router.push(`/promotoras/${id}`)
   }
+
+  if (carregando) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <p className="text-gray-400">⏳ Carregando dados...</p>
+    </div>
+  )
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-gradient-to-r from-red-600 to-orange-500 text-white px-4 py-4">
         <div className="max-w-2xl mx-auto flex items-center gap-3">
-          <Link href="/promotoras" className="text-white/80 hover:text-white text-sm">← Voltar</Link>
+          <Link href={`/promotoras/${id}`} className="text-white/80 hover:text-white text-sm">← Voltar</Link>
           <span className="text-white/40">|</span>
-          <h1 className="font-black text-lg">👩 Nova Promotora — GustPro</h1>
+          <h1 className="font-black text-lg">✏️ Editar Promotora</h1>
         </div>
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+
+        {/* Status */}
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <h2 className="font-bold text-gray-700 mb-3">🔄 Status do Cadastro</h2>
+          <div className="flex gap-2">
+            {['ativo', 'inativo', 'suspenso'].map(s => (
+              <button key={s} type="button" onClick={() => atualizar('status', s)}
+                className={`flex-1 py-2 rounded-xl border-2 font-semibold text-sm transition ${
+                  form.status === s
+                    ? s === 'ativo' ? 'bg-green-500 border-green-500 text-white'
+                      : s === 'inativo' ? 'bg-gray-400 border-gray-400 text-white'
+                      : 'bg-red-500 border-red-500 text-white'
+                    : 'bg-white border-gray-200 text-gray-500'
+                }`}>
+                {s === 'ativo' ? '✅ Ativo' : s === 'inativo' ? '⏸️ Inativo' : '🚫 Suspenso'}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Dados pessoais */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
@@ -191,13 +241,13 @@ export default function NovaPromotora() {
             {/* Foto */}
             <div className="flex flex-col items-center gap-3 mb-2">
               <div className="w-24 h-24 rounded-full border-4 border-red-200 overflow-hidden bg-gray-100 flex items-center justify-center">
-                {fotoPreview
-                  ? <img src={fotoPreview} alt="Preview" className="w-full h-full object-cover" />
+                {(fotoPreview || fotoAtualUrl)
+                  ? <img src={fotoPreview || fotoAtualUrl!} alt="Foto" className="w-full h-full object-cover" />
                   : <span className="text-4xl">👩</span>
                 }
               </div>
               <label className="cursor-pointer bg-red-50 border-2 border-dashed border-red-300 text-red-600 font-semibold text-sm px-4 py-2 rounded-xl hover:bg-red-100 transition">
-                📷 {fotoPreview ? 'Trocar foto' : 'Adicionar foto de perfil'}
+                📷 {(fotoPreview || fotoAtualUrl) ? 'Trocar foto' : 'Adicionar foto de perfil'}
                 <input type="file" accept="image/*" onChange={handleFoto} className="hidden" />
               </label>
               <p className="text-xs text-gray-400">JPG ou PNG • máximo 5MB</p>
@@ -313,15 +363,13 @@ export default function NovaPromotora() {
                   placeholder="TO" />
               </div>
             </div>
-
-            {/* Geolocalização */}
             <button type="button" onClick={geocodificarEndereco} disabled={geocodificando}
               className="w-full border-2 border-dashed border-blue-300 text-blue-600 font-semibold text-sm py-2 rounded-xl hover:bg-blue-50 transition disabled:opacity-50">
-              {geocodificando ? '⏳ Buscando localização...' : '🗺️ Obter Geolocalização do Endereço'}
+              {geocodificando ? '⏳ Buscando localização...' : '🗺️ Atualizar Geolocalização'}
             </button>
             {coordenadas && (
               <p className="text-xs text-green-600 text-center font-semibold">
-                ✅ Localização obtida! Lat: {coordenadas.lat.toFixed(5)}, Lng: {coordenadas.lng.toFixed(5)}
+                ✅ Localização: {coordenadas.lat.toFixed(5)}, {coordenadas.lng.toFixed(5)}
               </p>
             )}
           </div>
@@ -348,9 +396,9 @@ export default function NovaPromotora() {
               <label className="text-xs font-semibold text-gray-500 mb-2 block">Turno preferido</label>
               <div className="flex gap-2 flex-wrap">
                 {TURNOS.map(t => (
-                  <button key={t} type="button" onClick={() => setTurno(turno === t ? '' : t)}
+                  <button key={t} type="button" onClick={() => atualizar('disponibilidade_turno', form.disponibilidade_turno === t ? '' : t)}
                     className={`px-3 py-1.5 rounded-xl border-2 font-semibold text-sm transition capitalize ${
-                      turno === t ? 'bg-orange-500 border-orange-500 text-white' : 'bg-white border-gray-200 text-gray-500'
+                      form.disponibilidade_turno === t ? 'bg-orange-500 border-orange-500 text-white' : 'bg-white border-gray-200 text-gray-500'
                     }`}>
                     {t}
                   </button>
@@ -379,24 +427,20 @@ export default function NovaPromotora() {
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <h2 className="font-bold text-gray-700 mb-1">💰 Dados para Pagamento</h2>
           <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 mb-3">
-            <p className="text-xs text-yellow-700">
-              ⚠️ <strong>Atenção:</strong> Os dados bancários informados devem estar obrigatoriamente no nome do titular do cadastro. Não são aceitas contas de terceiros.
-            </p>
+            <p className="text-xs text-yellow-700">⚠️ Os dados bancários devem estar obrigatoriamente no nome do titular do cadastro.</p>
           </div>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-semibold text-gray-500 mb-1 block">Chave PIX</label>
-                <input value={form.chave_pix} onChange={e => atualizar('chave_pix', e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-red-400"
-                  placeholder="CPF, telefone ou e-mail" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-500 mb-1 block">Banco</label>
-                <input value={form.banco} onChange={e => atualizar('banco', e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-red-400"
-                  placeholder="Ex: Nubank, Bradesco..." />
-              </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500 mb-1 block">Chave PIX</label>
+              <input value={form.chave_pix} onChange={e => atualizar('chave_pix', e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="CPF, telefone ou e-mail" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 mb-1 block">Banco</label>
+              <input value={form.banco} onChange={e => atualizar('banco', e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-red-400"
+                placeholder="Ex: Nubank, Bradesco..." />
             </div>
           </div>
         </div>
@@ -409,23 +453,11 @@ export default function NovaPromotora() {
             placeholder="Observações internas sobre esta promotora..." />
         </div>
 
-        {/* LGPD */}
-        <div className="bg-blue-50 rounded-2xl p-5 border border-blue-200">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input type="checkbox" checked={form.consentimento_lgpd}
-              onChange={e => atualizar('consentimento_lgpd', e.target.checked)}
-              className="mt-1 w-4 h-4 accent-red-600" />
-            <span className="text-xs text-blue-700 leading-relaxed">
-              <strong>Consentimento LGPD:</strong> Confirmo que a promotora autorizou o armazenamento e uso de seus dados pessoais conforme a Lei Geral de Proteção de Dados (Lei 13.709/2018), exclusivamente para fins de gestão de serviços da <strong>GustPro</strong>.
-            </span>
-          </label>
-        </div>
-
         {erro && <p className="text-red-600 text-sm text-center bg-red-50 rounded-xl p-3">{erro}</p>}
 
         <button onClick={salvar} disabled={salvando}
           className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold py-4 rounded-2xl text-lg transition">
-          {salvando ? '⏳ Salvando...' : '✅ Cadastrar Promotora'}
+          {salvando ? '⏳ Salvando...' : '💾 Salvar Alterações'}
         </button>
       </div>
     </div>
