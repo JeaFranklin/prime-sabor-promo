@@ -5,7 +5,7 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-to-br from-red-600 to-orange-500 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md text-center">
         <div className="text-6xl mb-4">⭐</div>
-        <h1 className="text-2xl font-black text-red-600 mb-1">Prime Sabor Promo</h1>
+        <h1 className="text-2xl font-black text-red-600 mb-1">GustPro</h1>
         <p className="text-gray-500 text-sm mb-8">Sistema de Gestão de Promotoras</p>
 
         <div className="space-y-3">
