@@ -13,6 +13,7 @@ type Contato = {
   whatsapp: string
   email: string
   recebe_notificacao: boolean
+  tipo: 'geral' | 'financeiro'
 }
 
 function validarCNPJ(cnpj: string): boolean {
@@ -36,71 +37,183 @@ function formatarCNPJ(v: string): string {
     .replace(/(\d{4})(\d{1,2})$/, '$1-$2')
 }
 
-const contatoVazio = (): Contato => ({ nome: '', cargo: '', whatsapp: '', email: '', recebe_notificacao: true })
+function validarRedeSocial(valor: string, tipo: 'instagram' | 'linkedin' | 'facebook'): boolean {
+  if (!valor) return true
+  if (tipo === 'instagram') return /^@?[\w.]+$/.test(valor)
+  if (tipo === 'linkedin') return valor.includes('linkedin.com') || /^[\w-]+$/.test(valor)
+  if (tipo === 'facebook') return valor.includes('facebook.com') || /^[\w.]+$/.test(valor)
+  return true
+}
+
+const contatoVazio = (tipo: 'geral' | 'financeiro'): Contato => ({
+  nome: '', cargo: '', whatsapp: '', email: '', recebe_notificacao: true, tipo
+})
+
+async function buscarDadosCNPJ(cnpj: string) {
+  const n = cnpj.replace(/\D/g, '')
+  const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${n}`)
+  if (!res.ok) throw new Error('CNPJ não encontrado')
+  return res.json()
+}
 
 export default function NovoCliente() {
   const router = useRouter()
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
   const [cnpjErro, setCnpjErro] = useState('')
+  const [buscandoCNPJ, setBuscandoCNPJ] = useState(false)
+  const [cnpjOk, setCnpjOk] = useState('')
   const [geocodificando, setGeocodificando] = useState(false)
   const [coordenadas, setCoordenadas] = useState<{ lat: number; lng: number } | null>(null)
-  const [contatos, setContatos] = useState<Contato[]>([contatoVazio()])
+  const [buscandoLogo, setBuscandoLogo] = useState(false)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [contatosGerais, setContatosGerais] = useState<Contato[]>([contatoVazio('geral')])
+  const [contatosFinanceiro, setContatosFinanceiro] = useState<Contato[]>([contatoVazio('financeiro')])
   const [form, setForm] = useState({
-    nome_empresa: '',
-    cnpj: '',
-    inscricao_estadual: '',
-    categoria: '',
-    site: '',
-    instagram: '',
-    linkedin: '',
-    facebook: '',
-    rua: '',
-    numero: '',
-    bairro: '',
-    cep: '',
-    cidade: '',
-    estado: '',
-    observacoes: '',
+    nome_empresa: '', nome_fantasia: '', cnpj: '', inscricao_estadual: '',
+    categoria: '', data_fundacao: '', data_inauguracao: '',
+    telefone: '', site: '', email_xml: '', whatsapp_ofertas: '',
+    instagram: '', linkedin: '', facebook: '',
+    rua: '', numero: '', bairro: '', cep: '', cidade: '', estado: '',
+    observacoes: '', logo_url: '',
   })
 
   function atualizar(campo: string, valor: string) {
     setForm(prev => ({ ...prev, [campo]: valor }))
   }
 
-  function handleCNPJ(v: string) {
+  async function handleCNPJ(v: string) {
     const f = formatarCNPJ(v)
     atualizar('cnpj', f)
     const n = f.replace(/\D/g, '')
-    if (n.length === 14) setCnpjErro(validarCNPJ(n) ? '' : '❌ CNPJ inválido.')
-    else setCnpjErro('')
+    if (n.length !== 14) { setCnpjErro(''); setCnpjOk(''); return }
+    if (!validarCNPJ(n)) { setCnpjErro('❌ CNPJ inválido.'); setCnpjOk(''); return }
+    setCnpjErro('')
+    setBuscandoCNPJ(true)
+    setCnpjOk('')
+    try {
+      const d = await buscarDadosCNPJ(n)
+      // Preenche campos automaticamente (sem sobrescrever o que usuário já digitou)
+      setForm(prev => ({
+        ...prev,
+        nome_empresa: prev.nome_empresa || d.razao_social || '',
+        nome_fantasia: prev.nome_fantasia || d.nome_fantasia || '',
+        inscricao_estadual: prev.inscricao_estadual || '',
+        telefone: prev.telefone || (d.ddd_telefone_1 ? d.ddd_telefone_1.trim() : ''),
+        email_xml: prev.email_xml || d.email || '',
+        rua: prev.rua || (d.logradouro ? d.logradouro.trim() : ''),
+        numero: prev.numero || d.numero || '',
+        bairro: prev.bairro || d.bairro || '',
+        cep: prev.cep || (d.cep ? d.cep.replace(/\D/g, '').replace(/(\d{5})(\d{3})/, '$1-$2') : ''),
+        cidade: prev.cidade || d.municipio || '',
+        estado: prev.estado || d.uf || '',
+        data_fundacao: prev.data_fundacao || d.data_inicio_atividade || '',
+      }))
+      setCnpjOk('✅ CNPJ válido — dados preenchidos automaticamente!')
+    } catch {
+      setCnpjOk('✅ CNPJ válido. (Dados da Receita Federal não encontrados — preencha manualmente.)')
+    }
+    setBuscandoCNPJ(false)
   }
 
-  function atualizarContato(idx: number, campo: keyof Contato, valor: string | boolean) {
-    setContatos(prev => prev.map((c, i) => i === idx ? { ...c, [campo]: valor } : c))
+  async function buscarLogo() {
+    const dominio = form.site.replace(/https?:\/\//, '').replace(/www\./, '').split('/')[0]
+    const instagram = form.instagram.replace('@', '')
+    if (!dominio && !instagram) { setErro('Informe o site ou Instagram para buscar o logo.'); return }
+    setBuscandoLogo(true)
+    setErro('')
+    // Tenta Clearbit pelo domínio do site
+    if (dominio) {
+      const url = `https://logo.clearbit.com/${dominio}`
+      try {
+        const res = await fetch(url)
+        if (res.ok) {
+          setLogoPreview(url)
+          atualizar('logo_url', url)
+          setBuscandoLogo(false)
+          return
+        }
+      } catch { /* continua */ }
+    }
+    // Tenta pelo Instagram
+    if (instagram) {
+      const url = `https://logo.clearbit.com/${instagram}.com`
+      try {
+        const res = await fetch(url)
+        if (res.ok) {
+          setLogoPreview(url)
+          atualizar('logo_url', url)
+          setBuscandoLogo(false)
+          return
+        }
+      } catch { /* continua */ }
+    }
+    setErro('⚠️ Logo não encontrado automaticamente. Informe a URL da imagem manualmente abaixo.')
+    setBuscandoLogo(false)
   }
 
-  function adicionarContato() {
-    setContatos(prev => [...prev, contatoVazio()])
+  function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = async ev => {
+      const base64 = ev.target?.result as string
+      // Upload para Supabase Storage
+      const ext = file.name.split('.').pop()
+      const nomeArquivo = `logos/${Date.now()}.${ext}`
+      const { data: uploadData, error } = await supabase.storage.from('FOTO').upload(nomeArquivo, file, { upsert: true })
+      if (!error && uploadData) {
+        const { data: urlData } = supabase.storage.from('FOTO').getPublicUrl(uploadData.path)
+        setLogoPreview(urlData.publicUrl)
+        atualizar('logo_url', urlData.publicUrl)
+      } else {
+        setLogoPreview(base64)
+        atualizar('logo_url', base64)
+      }
+    }
+    reader.readAsDataURL(file)
   }
 
-  function removerContato(idx: number) {
-    if (contatos.length === 1) return
-    setContatos(prev => prev.filter((_, i) => i !== idx))
+  function atualizarContato(lista: Contato[], setLista: (v: Contato[]) => void, idx: number, campo: keyof Contato, valor: string | boolean) {
+    setLista(lista.map((c, i) => i === idx ? { ...c, [campo]: valor } : c))
   }
 
   async function geocodificar() {
     const { rua, numero, bairro, cidade, estado } = form
-    if (!rua || !cidade) { setErro('Preencha Rua e Cidade para buscar a localização.'); return }
+    if (!cidade) { setErro('Preencha pelo menos a Cidade para buscar a localização.'); return }
     setGeocodificando(true)
     setErro('')
-    const q = `${rua}, ${numero}, ${bairro}, ${cidade}, ${estado}, Brasil`
+    const partes = [rua, numero, bairro, cidade, estado, 'Brasil'].filter(Boolean)
+    const q = partes.join(', ')
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`, { headers: { 'Accept-Language': 'pt-BR' } })
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1&countrycodes=br`
+      const res = await fetch(url, {
+        headers: {
+          'Accept-Language': 'pt-BR,pt;q=0.9',
+          'User-Agent': 'GustPro-Sistema/1.0 (sistema interno)'
+        }
+      })
+      if (!res.ok) throw new Error('Erro na API')
       const data = await res.json()
-      if (data.length > 0) setCoordenadas({ lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) })
-      else setErro('⚠️ Endereço não encontrado. Verifique os dados.')
-    } catch { setErro('Erro ao buscar localização.') }
+      if (data.length > 0) {
+        setCoordenadas({ lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) })
+      } else {
+        // Tenta só cidade + estado como fallback
+        const q2 = [cidade, estado, 'Brasil'].join(', ')
+        const res2 = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q2)}&limit=1&countrycodes=br`, {
+          headers: { 'Accept-Language': 'pt-BR', 'User-Agent': 'GustPro-Sistema/1.0' }
+        })
+        const data2 = await res2.json()
+        if (data2.length > 0) {
+          setCoordenadas({ lat: parseFloat(data2[0].lat), lng: parseFloat(data2[0].lon) })
+          setErro('⚠️ Endereço exato não encontrado. Localização aproximada pela cidade.')
+        } else {
+          setErro('❌ Localização não encontrada. Verifique o endereço e tente novamente.')
+        }
+      }
+    } catch {
+      setErro('❌ Erro ao buscar localização. Verifique sua internet.')
+    }
     setGeocodificando(false)
   }
 
@@ -108,7 +221,11 @@ export default function NovoCliente() {
     if (!form.nome_empresa.trim()) { setErro('Nome da empresa é obrigatório.'); return }
     if (form.cnpj && !validarCNPJ(form.cnpj.replace(/\D/g, ''))) { setErro('CNPJ inválido.'); return }
     if (!form.categoria) { setErro('Selecione uma categoria.'); return }
-    if (contatos.some(c => !c.nome.trim())) { setErro('Preencha o nome de todos os contatos.'); return }
+    if (form.instagram && !validarRedeSocial(form.instagram, 'instagram')) { setErro('Instagram inválido.'); return }
+    const todosContatos = [...contatosGerais, ...contatosFinanceiro]
+    if (todosContatos.some(c => c.nome.trim() === '' && (c.whatsapp || c.email))) {
+      setErro('Preencha o nome de todos os contatos.'); return
+    }
 
     setSalvando(true)
     setErro('')
@@ -123,15 +240,74 @@ export default function NovoCliente() {
     if (error) { setSalvando(false); setErro('Erro ao salvar: ' + error.message); return }
 
     const clienteId = data.id
-    if (contatos.filter(c => c.nome.trim()).length > 0) {
+    const contatosValidos = todosContatos.filter(c => c.nome.trim())
+    if (contatosValidos.length > 0) {
       await supabase.from('contatos_cliente').insert(
-        contatos.filter(c => c.nome.trim()).map(c => ({ ...c, cliente_id: clienteId }))
+        contatosValidos.map(c => ({ ...c, cliente_id: clienteId }))
       )
     }
 
     setSalvando(false)
     router.push('/clientes')
   }
+
+  const renderContatos = (lista: Contato[], setLista: (v: Contato[]) => void, tipo: 'geral' | 'financeiro') => (
+    <div className="space-y-4">
+      {lista.map((c, idx) => (
+        <div key={idx} className="border border-gray-100 rounded-xl p-4 bg-gray-50 relative">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-bold text-gray-500">Contato {idx + 1}</span>
+            {lista.length > 1 && (
+              <button type="button" onClick={() => setLista(lista.filter((_, i) => i !== idx))}
+                className="text-red-400 hover:text-red-600 text-xs font-semibold">× Remover</button>
+            )}
+          </div>
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs font-semibold text-gray-400 mb-1 block">Nome *</label>
+                <input value={c.nome} onChange={e => atualizarContato(lista, setLista, idx, 'nome', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white"
+                  placeholder="Nome completo" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-400 mb-1 block">Cargo</label>
+                <input value={c.cargo} onChange={e => atualizarContato(lista, setLista, idx, 'cargo', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white"
+                  placeholder={tipo === 'financeiro' ? 'Ex: Financeiro, Contabilidade...' : 'Ex: Gerente, Compras...'} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs font-semibold text-gray-400 mb-1 block">WhatsApp</label>
+                <input value={c.whatsapp} onChange={e => atualizarContato(lista, setLista, idx, 'whatsapp', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white"
+                  placeholder="55 62 9 9999-9999" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-400 mb-1 block">E-mail</label>
+                <input value={c.email} onChange={e => atualizarContato(lista, setLista, idx, 'email', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white"
+                  placeholder="email@empresa.com" />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer mt-1">
+              <input type="checkbox" checked={c.recebe_notificacao}
+                onChange={e => atualizarContato(lista, setLista, idx, 'recebe_notificacao', e.target.checked)}
+                className="w-4 h-4 accent-green-600" />
+              <span className="text-xs text-gray-600 font-semibold">
+                💬 Receber notificação via WhatsApp quando houver serviço agendado
+              </span>
+            </label>
+          </div>
+        </div>
+      ))}
+      <button type="button" onClick={() => setLista([...lista, contatoVazio(tipo)])}
+        className="w-full border-2 border-dashed border-green-200 text-green-600 text-sm font-semibold py-2 rounded-xl hover:bg-green-50 transition">
+        + Adicionar {tipo === 'financeiro' ? 'contato financeiro' : 'contato'}
+      </button>
+    </div>
+  )
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -145,25 +321,72 @@ export default function NovoCliente() {
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
 
+        {/* Logo */}
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <h2 className="font-bold text-gray-700 mb-4">🖼️ Logo da Empresa</h2>
+          <div className="flex items-center gap-4">
+            <div className="w-20 h-20 rounded-2xl border-2 border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+              {logoPreview
+                ? <img src={logoPreview} alt="Logo" className="w-full h-full object-contain p-1" onError={() => setLogoPreview(null)} />
+                : <span className="text-3xl">🏢</span>
+              }
+            </div>
+            <div className="flex-1 space-y-2">
+              <button type="button" onClick={buscarLogo} disabled={buscandoLogo}
+                className="w-full bg-blue-50 border border-blue-200 text-blue-700 text-sm font-semibold py-2 rounded-xl hover:bg-blue-100 transition disabled:opacity-50">
+                {buscandoLogo ? '⏳ Buscando...' : '🔍 Buscar logo automaticamente (pelo site ou Instagram)'}
+              </button>
+              <p className="text-xs text-gray-400 text-center">ou</p>
+              <label className="block w-full text-center bg-gray-50 border border-gray-200 text-gray-600 text-sm font-semibold py-2 rounded-xl hover:bg-gray-100 transition cursor-pointer">
+                📁 Enviar logo do computador
+                <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+              </label>
+              {form.logo_url && !logoPreview && (
+                <input value={form.logo_url} onChange={e => { atualizar('logo_url', e.target.value); setLogoPreview(e.target.value) }}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-green-400"
+                  placeholder="Ou cole a URL da imagem aqui" />
+              )}
+            </div>
+          </div>
+          {!logoPreview && (
+            <input value={form.logo_url} onChange={e => { atualizar('logo_url', e.target.value); if (e.target.value) setLogoPreview(e.target.value) }}
+              className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400 mt-3"
+              placeholder="Ou cole a URL do logo aqui..." />
+          )}
+        </div>
+
         {/* Dados da empresa */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <h2 className="font-bold text-gray-700 mb-4">🏢 Dados da Empresa</h2>
           <div className="space-y-3">
-            <div>
-              <label className="text-xs font-semibold text-gray-500 mb-1 block">Nome da Empresa *</label>
-              <input value={form.nome_empresa} onChange={e => atualizar('nome_empresa', e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                placeholder="Ex: Nestlé Brasil Ltda" />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">Razão Social *</label>
+                <input value={form.nome_empresa} onChange={e => atualizar('nome_empresa', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
+                  placeholder="Nome registrado (CNPJ)" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">Nome Fantasia</label>
+                <input value={form.nome_fantasia} onChange={e => atualizar('nome_fantasia', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
+                  placeholder="Como é conhecido" />
+              </div>
             </div>
-
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-gray-500 mb-1 block">CNPJ</label>
-                <input value={form.cnpj} onChange={e => handleCNPJ(e.target.value)}
-                  className={`w-full border rounded-xl px-4 py-2 text-sm focus:outline-none ${cnpjErro ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-green-400'}`}
-                  placeholder="00.000.000/0000-00" maxLength={18} />
+                <div className="relative">
+                  <input value={form.cnpj} onChange={e => handleCNPJ(e.target.value)}
+                    className={`w-full border rounded-xl px-4 py-2 text-sm focus:outline-none pr-10 ${cnpjErro ? 'border-red-400 bg-red-50' : cnpjOk ? 'border-green-400 bg-green-50' : 'border-gray-200 focus:border-green-400'}`}
+                    placeholder="00.000.000/0000-00" maxLength={18} />
+                  {buscandoCNPJ && (
+                    <span className="absolute right-3 top-2.5 text-sm animate-spin">⏳</span>
+                  )}
+                </div>
                 {cnpjErro && <p className="text-xs text-red-500 mt-1">{cnpjErro}</p>}
-                {form.cnpj.replace(/\D/g, '').length === 14 && !cnpjErro && <p className="text-xs text-green-600 mt-1">✅ CNPJ válido</p>}
+                {buscandoCNPJ && <p className="text-xs text-blue-500 mt-1">🔍 Consultando Receita Federal...</p>}
+                {cnpjOk && !buscandoCNPJ && <p className="text-xs text-green-600 mt-1">{cnpjOk}</p>}
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-500 mb-1 block">Inscrição Estadual</label>
@@ -172,7 +395,18 @@ export default function NovoCliente() {
                   placeholder="000.000.000.000" />
               </div>
             </div>
-
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">Data de Fundação</label>
+                <input type="date" value={form.data_fundacao} onChange={e => atualizar('data_fundacao', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">Data de Inauguração</label>
+                <input type="date" value={form.data_inauguracao} onChange={e => atualizar('data_inauguracao', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400" />
+              </div>
+            </div>
             <div>
               <label className="text-xs font-semibold text-gray-500 mb-2 block">Categoria *</label>
               <div className="flex gap-2 flex-wrap">
@@ -184,12 +418,46 @@ export default function NovoCliente() {
                 ))}
               </div>
             </div>
+          </div>
+        </div>
 
-            <div>
-              <label className="text-xs font-semibold text-gray-500 mb-1 block">Site</label>
-              <input value={form.site} onChange={e => atualizar('site', e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                placeholder="www.empresa.com.br" />
+        {/* Contatos e canais */}
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <h2 className="font-bold text-gray-700 mb-4">📞 Canais de Contato</h2>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">Telefone Fixo</label>
+                <input value={form.telefone} onChange={e => atualizar('telefone', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
+                  placeholder="(62) 3333-4444" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">Site</label>
+                <input value={form.site} onChange={e => atualizar('site', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
+                  placeholder="www.empresa.com.br" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">
+                  E-mail XML
+                  <span className="text-gray-400 font-normal ml-1">(NF-e)</span>
+                </label>
+                <input value={form.email_xml} onChange={e => atualizar('email_xml', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
+                  placeholder="nfe@empresa.com" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">
+                  WhatsApp Ofertas
+                  <span className="text-gray-400 font-normal ml-1">(loja)</span>
+                </label>
+                <input value={form.whatsapp_ofertas} onChange={e => atualizar('whatsapp_ofertas', e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
+                  placeholder="55 62 9 9999-9999" />
+              </div>
             </div>
           </div>
         </div>
@@ -198,24 +466,24 @@ export default function NovoCliente() {
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <h2 className="font-bold text-gray-700 mb-4">📱 Redes Sociais</h2>
           <div className="space-y-3">
-            <div>
-              <label className="text-xs font-semibold text-gray-500 mb-1 block">📸 Instagram</label>
-              <input value={form.instagram} onChange={e => atualizar('instagram', e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                placeholder="@empresa" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 mb-1 block">💼 LinkedIn</label>
-              <input value={form.linkedin} onChange={e => atualizar('linkedin', e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                placeholder="linkedin.com/company/empresa" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 mb-1 block">📘 Facebook</label>
-              <input value={form.facebook} onChange={e => atualizar('facebook', e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                placeholder="facebook.com/empresa" />
-            </div>
+            {[
+              { campo: 'instagram', label: '📸 Instagram', placeholder: '@empresa', tipo: 'instagram' as const },
+              { campo: 'linkedin', label: '💼 LinkedIn', placeholder: 'linkedin.com/company/empresa', tipo: 'linkedin' as const },
+              { campo: 'facebook', label: '📘 Facebook', placeholder: 'facebook.com/empresa', tipo: 'facebook' as const },
+            ].map(({ campo, label, placeholder, tipo }) => {
+              const val = form[campo as keyof typeof form] as string
+              const valido = validarRedeSocial(val, tipo)
+              return (
+                <div key={campo}>
+                  <label className="text-xs font-semibold text-gray-500 mb-1 block">{label}</label>
+                  <input value={val} onChange={e => atualizar(campo, e.target.value)}
+                    className={`w-full border rounded-xl px-4 py-2 text-sm focus:outline-none ${val && !valido ? 'border-red-400 bg-red-50' : 'border-gray-200 focus:border-green-400'}`}
+                    placeholder={placeholder} />
+                  {val && !valido && <p className="text-xs text-red-500 mt-1">❌ Formato inválido</p>}
+                  {val && valido && <p className="text-xs text-green-600 mt-1">✅ Válido</p>}
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -226,123 +494,69 @@ export default function NovoCliente() {
           <div className="space-y-3">
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
-                <label className="text-xs font-semibold text-gray-500 mb-1 block">Rua</label>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">Rua / Avenida</label>
                 <input value={form.rua} onChange={e => atualizar('rua', e.target.value)}
                   className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                  placeholder="Nome da rua / avenida" />
+                  placeholder="Nome da rua" />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-500 mb-1 block">Número</label>
                 <input value={form.numero} onChange={e => atualizar('numero', e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                  placeholder="Nº" />
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400" placeholder="Nº" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-gray-500 mb-1 block">Bairro</label>
                 <input value={form.bairro} onChange={e => atualizar('bairro', e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                  placeholder="Bairro" />
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400" placeholder="Bairro" />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-500 mb-1 block">CEP</label>
                 <input value={form.cep} onChange={e => atualizar('cep', e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                  placeholder="00000-000" />
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400" placeholder="00000-000" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-semibold text-gray-500 mb-1 block">Cidade</label>
+                <label className="text-xs font-semibold text-gray-500 mb-1 block">Cidade *</label>
                 <input value={form.cidade} onChange={e => atualizar('cidade', e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                  placeholder="Goiânia" />
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400" placeholder="Goiânia" />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-500 mb-1 block">Estado</label>
                 <input value={form.estado} onChange={e => atualizar('estado', e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400"
-                  placeholder="GO" maxLength={2} />
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-green-400" placeholder="GO" maxLength={2} />
               </div>
             </div>
             <button type="button" onClick={geocodificar} disabled={geocodificando}
-              className="w-full border-2 border-dashed border-blue-300 text-blue-600 font-semibold text-sm py-2 rounded-xl hover:bg-blue-50 transition disabled:opacity-50">
+              className="w-full border-2 border-dashed border-blue-300 text-blue-600 font-semibold text-sm py-2.5 rounded-xl hover:bg-blue-50 transition disabled:opacity-50">
               {geocodificando ? '⏳ Buscando localização...' : '🗺️ Obter Geolocalização do Endereço'}
             </button>
             {coordenadas && (
-              <p className="text-xs text-green-600 text-center font-semibold">
-                ✅ Localização obtida! As promotoras conseguirão navegar até aqui pelo Google Maps.
-              </p>
+              <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                <p className="text-xs text-green-700 font-semibold">✅ Localização obtida! As promotoras conseguirão navegar até aqui pelo Google Maps.</p>
+                <a href={`https://maps.google.com/?q=${coordenadas.lat},${coordenadas.lng}`} target="_blank"
+                  className="text-xs text-blue-500 hover:underline mt-1 inline-block">
+                  Verificar no mapa →
+                </a>
+              </div>
             )}
           </div>
         </div>
 
-        {/* Contatos */}
+        {/* Contatos gerais */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
-          <div className="flex items-center justify-between mb-1">
-            <h2 className="font-bold text-gray-700">👥 Contatos da Empresa</h2>
-            <button type="button" onClick={adicionarContato}
-              className="bg-green-50 border border-green-200 text-green-700 text-xs font-bold px-3 py-1.5 rounded-xl hover:bg-green-100 transition">
-              + Adicionar contato
-            </button>
-          </div>
-          <p className="text-xs text-gray-400 mb-4">
-            Cada contato marcado com 💬 receberá notificação via WhatsApp quando um serviço for agendado nesta empresa.
-          </p>
-          <div className="space-y-4">
-            {contatos.map((c, idx) => (
-              <div key={idx} className="border border-gray-100 rounded-xl p-4 bg-gray-50 relative">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-bold text-gray-500">Contato {idx + 1}</span>
-                  {contatos.length > 1 && (
-                    <button type="button" onClick={() => removerContato(idx)}
-                      className="text-red-400 hover:text-red-600 text-xs font-semibold transition">
-                      × Remover
-                    </button>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs font-semibold text-gray-400 mb-1 block">Nome *</label>
-                      <input value={c.nome} onChange={e => atualizarContato(idx, 'nome', e.target.value)}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white"
-                        placeholder="Nome completo" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-gray-400 mb-1 block">Cargo</label>
-                      <input value={c.cargo} onChange={e => atualizarContato(idx, 'cargo', e.target.value)}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white"
-                        placeholder="Ex: Gerente, Compras..." />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs font-semibold text-gray-400 mb-1 block">WhatsApp</label>
-                      <input value={c.whatsapp} onChange={e => atualizarContato(idx, 'whatsapp', e.target.value)}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white"
-                        placeholder="55 62 9 9999-9999" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-gray-400 mb-1 block">E-mail</label>
-                      <input value={c.email} onChange={e => atualizarContato(idx, 'email', e.target.value)}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-green-400 bg-white"
-                        placeholder="email@empresa.com" />
-                    </div>
-                  </div>
-                  <label className="flex items-center gap-2 cursor-pointer mt-1">
-                    <input type="checkbox" checked={c.recebe_notificacao}
-                      onChange={e => atualizarContato(idx, 'recebe_notificacao', e.target.checked)}
-                      className="w-4 h-4 accent-green-600" />
-                    <span className="text-xs text-gray-600 font-semibold">
-                      💬 Receber notificação via WhatsApp quando houver serviço agendado
-                    </span>
-                  </label>
-                </div>
-              </div>
-            ))}
-          </div>
+          <h2 className="font-bold text-gray-700 mb-1">👥 Contatos Gerais</h2>
+          <p className="text-xs text-gray-400 mb-4">Pessoas que gerenciam os serviços na loja (gerentes, supervisores, compradores).</p>
+          {renderContatos(contatosGerais, setContatosGerais, 'geral')}
+        </div>
+
+        {/* Contatos financeiro */}
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <h2 className="font-bold text-gray-700 mb-1">💰 Contatos Financeiro</h2>
+          <p className="text-xs text-gray-400 mb-4">Responsáveis por pagamentos, NF-e e questões financeiras da empresa.</p>
+          {renderContatos(contatosFinanceiro, setContatosFinanceiro, 'financeiro')}
         </div>
 
         {/* Observações */}

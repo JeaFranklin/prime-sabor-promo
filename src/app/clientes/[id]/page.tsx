@@ -8,12 +8,19 @@ import { supabase } from '@/lib/supabase'
 type Cliente = {
   id: string
   nome_empresa: string
+  nome_fantasia: string
   cnpj: string
   inscricao_estadual: string
-  contato_nome: string
-  whatsapp: string
-  email: string
   categoria: string
+  data_fundacao: string
+  data_inauguracao: string
+  telefone: string
+  site: string
+  email_xml: string
+  whatsapp_ofertas: string
+  instagram: string
+  linkedin: string
+  facebook: string
   cidade: string
   estado: string
   rua: string
@@ -22,11 +29,8 @@ type Cliente = {
   cep: string
   lat: number
   lng: number
-  site: string
-  instagram: string
-  linkedin: string
-  facebook: string
   observacoes: string
+  logo_url: string
   status: string
   created_at: string
 }
@@ -38,6 +42,7 @@ type Contato = {
   whatsapp: string
   email: string
   recebe_notificacao: boolean
+  tipo: string
 }
 
 const STATUS_CORES: Record<string, string> = {
@@ -48,6 +53,36 @@ const STATUS_CORES: Record<string, string> = {
 
 const CATEGORIA_ICONES: Record<string, string> = {
   'indústria': '🏭', 'distribuidor': '🚚', 'varejo': '🛒', 'evento': '🎪', 'agência': '📢',
+}
+
+function formatarData(d: string) {
+  if (!d) return ''
+  return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR')
+}
+
+function urlInstagram(v: string) {
+  const user = v.replace('@', '').trim()
+  return `https://instagram.com/${user}`
+}
+
+function urlLinkedin(v: string) {
+  const s = v.trim()
+  if (s.startsWith('http')) return s
+  if (s.includes('linkedin.com')) return `https://${s}`
+  return `https://linkedin.com/company/${s}`
+}
+
+function urlFacebook(v: string) {
+  const s = v.trim()
+  if (s.startsWith('http')) return s
+  if (s.includes('facebook.com')) return `https://${s}`
+  return `https://facebook.com/${s}`
+}
+
+function urlSite(v: string) {
+  const s = v.trim()
+  if (s.startsWith('http')) return s
+  return `https://${s}`
 }
 
 export default function PerfilCliente() {
@@ -62,7 +97,7 @@ export default function PerfilCliente() {
     async function carregar() {
       const [{ data: cData }, { data: ctData }] = await Promise.all([
         supabase.from('clientes').select('*').eq('id', id).single(),
-        supabase.from('contatos_cliente').select('*').eq('cliente_id', id).order('created_at'),
+        supabase.from('contatos_cliente').select('*').eq('cliente_id', id).order('tipo').order('created_at'),
       ])
       if (cData) setCliente(cData)
       setContatos(ctData || [])
@@ -92,6 +127,8 @@ export default function PerfilCliente() {
   )
 
   const enderecoCompleto = [cliente.rua, cliente.numero, cliente.bairro, cliente.cidade, cliente.estado].filter(Boolean).join(', ')
+  const contatosGerais = contatos.filter(c => c.tipo !== 'financeiro')
+  const contatosFinanceiro = contatos.filter(c => c.tipo === 'financeiro')
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -114,12 +151,18 @@ export default function PerfilCliente() {
         {/* Card principal */}
         <div className="bg-white rounded-2xl shadow-sm p-6">
           <div className="flex items-start gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-green-100 flex items-center justify-center text-3xl flex-shrink-0">
-              {CATEGORIA_ICONES[cliente.categoria] || '🏢'}
+            <div className="w-16 h-16 rounded-2xl bg-green-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+              {cliente.logo_url
+                ? <img src={cliente.logo_url} alt="Logo" className="w-full h-full object-contain p-1" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                : <span className="text-3xl">{CATEGORIA_ICONES[cliente.categoria] || '🏢'}</span>
+              }
             </div>
             <div className="flex-1">
               <h2 className="text-xl font-black text-gray-800">{cliente.nome_empresa}</h2>
-              <p className="text-sm text-gray-500">{cliente.cidade}{cliente.estado ? `, ${cliente.estado}` : ''}</p>
+              {cliente.nome_fantasia && (
+                <p className="text-sm text-gray-500 font-semibold">{cliente.nome_fantasia}</p>
+              )}
+              <p className="text-xs text-gray-400">{cliente.cidade}{cliente.estado ? `, ${cliente.estado}` : ''}</p>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_CORES[cliente.status] || 'bg-gray-100 text-gray-500'}`}>
                   {cliente.status}
@@ -155,45 +198,51 @@ export default function PerfilCliente() {
 
           {/* Ações rápidas */}
           <div className="flex gap-2 mt-4 pt-4 border-t border-gray-100 flex-wrap">
-            {cliente.whatsapp && (
-              <a href={`https://wa.me/${cliente.whatsapp.replace(/\D/g, '')}`} target="_blank"
-                className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-3 py-2 rounded-xl transition">
-                💬 WhatsApp
+            {cliente.telefone && (
+              <a href={`tel:${cliente.telefone.replace(/\D/g, '')}`}
+                className="flex items-center gap-1 bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-xl transition">
+                📞 Ligar
               </a>
             )}
-            {cliente.email && (
-              <a href={`mailto:${cliente.email}`}
-                className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold px-3 py-2 rounded-xl transition">
-                ✉️ E-mail
+            {cliente.whatsapp_ofertas && (
+              <a href={`https://wa.me/${cliente.whatsapp_ofertas.replace(/\D/g, '')}`} target="_blank"
+                className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold px-3 py-2 rounded-xl transition">
+                💬 Zap Ofertas
+              </a>
+            )}
+            {cliente.email_xml && (
+              <a href={`mailto:${cliente.email_xml}`}
+                className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold px-3 py-2 rounded-xl transition">
+                ✉️ E-mail XML
               </a>
             )}
             {cliente.site && (
-              <a href={cliente.site.startsWith('http') ? cliente.site : `https://${cliente.site}`} target="_blank"
-                className="flex items-center gap-1 bg-gray-600 hover:bg-gray-700 text-white text-sm font-semibold px-3 py-2 rounded-xl transition">
+              <a href={urlSite(cliente.site)} target="_blank"
+                className="flex items-center gap-1 bg-gray-600 hover:bg-gray-700 text-white text-xs font-semibold px-3 py-2 rounded-xl transition">
                 🌐 Site
               </a>
             )}
             {cliente.instagram && (
-              <a href={`https://instagram.com/${cliente.instagram.replace('@', '')}`} target="_blank"
-                className="flex items-center gap-1 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-3 py-2 rounded-xl transition">
+              <a href={urlInstagram(cliente.instagram)} target="_blank"
+                className="flex items-center gap-1 bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-2 rounded-xl transition">
                 📸 Instagram
               </a>
             )}
             {cliente.linkedin && (
-              <a href={cliente.linkedin.startsWith('http') ? cliente.linkedin : `https://${cliente.linkedin}`} target="_blank"
-                className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 text-white text-sm font-semibold px-3 py-2 rounded-xl transition">
+              <a href={urlLinkedin(cliente.linkedin)} target="_blank"
+                className="flex items-center gap-1 bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold px-3 py-2 rounded-xl transition">
                 💼 LinkedIn
               </a>
             )}
             {cliente.facebook && (
-              <a href={cliente.facebook.startsWith('http') ? cliente.facebook : `https://${cliente.facebook}`} target="_blank"
-                className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-3 py-2 rounded-xl transition">
+              <a href={urlFacebook(cliente.facebook)} target="_blank"
+                className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-xl transition">
                 📘 Facebook
               </a>
             )}
             {(cliente.lat && cliente.lng) && (
               <a href={`https://maps.google.com/?q=${cliente.lat},${cliente.lng}`} target="_blank"
-                className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold px-3 py-2 rounded-xl transition">
+                className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold px-3 py-2 rounded-xl transition">
                 🗺️ Mapa
               </a>
             )}
@@ -228,6 +277,36 @@ export default function PerfilCliente() {
                       <p className="text-sm font-semibold text-gray-700">{cliente.inscricao_estadual}</p>
                     </div>
                   )}
+                  {cliente.data_fundacao && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Data de Fundação</p>
+                      <p className="text-sm font-semibold text-gray-700">{formatarData(cliente.data_fundacao)}</p>
+                    </div>
+                  )}
+                  {cliente.data_inauguracao && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Data de Inauguração</p>
+                      <p className="text-sm font-semibold text-gray-700">{formatarData(cliente.data_inauguracao)}</p>
+                    </div>
+                  )}
+                  {cliente.telefone && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Telefone Fixo</p>
+                      <p className="text-sm font-semibold text-gray-700">{cliente.telefone}</p>
+                    </div>
+                  )}
+                  {cliente.email_xml && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">E-mail XML (NF-e)</p>
+                      <p className="text-sm font-semibold text-gray-700 break-all">{cliente.email_xml}</p>
+                    </div>
+                  )}
+                  {cliente.whatsapp_ofertas && (
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">WhatsApp Ofertas</p>
+                      <p className="text-sm font-semibold text-gray-700">{cliente.whatsapp_ofertas}</p>
+                    </div>
+                  )}
                 </div>
                 {cliente.observacoes && (
                   <>
@@ -245,7 +324,7 @@ export default function PerfilCliente() {
 
             {/* ABA CONTATOS */}
             {aba === 'contatos' && (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {contatos.length === 0 ? (
                   <div className="text-center py-6 text-gray-400">
                     <p className="text-2xl mb-2">👥</p>
@@ -254,35 +333,80 @@ export default function PerfilCliente() {
                       + Adicionar contato
                     </Link>
                   </div>
-                ) : contatos.map(c => (
-                  <div key={c.id} className="border border-gray-100 rounded-xl p-4">
-                    <div className="flex items-start justify-between">
+                ) : (
+                  <>
+                    {contatosGerais.length > 0 && (
                       <div>
-                        <p className="font-bold text-gray-800 text-sm">{c.nome}</p>
-                        {c.cargo && <p className="text-xs text-gray-500">{c.cargo}</p>}
+                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">👥 Contatos Gerais</h3>
+                        <div className="space-y-3">
+                          {contatosGerais.map(c => (
+                            <div key={c.id} className="border border-gray-100 rounded-xl p-4">
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <p className="font-bold text-gray-800 text-sm">{c.nome}</p>
+                                  {c.cargo && <p className="text-xs text-gray-500">{c.cargo}</p>}
+                                </div>
+                                {c.recebe_notificacao && (
+                                  <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-200 font-semibold">
+                                    💬 Recebe Zap
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex gap-2 mt-3 flex-wrap">
+                                {c.whatsapp && (
+                                  <a href={`https://wa.me/${c.whatsapp.replace(/\D/g, '')}`} target="_blank"
+                                    className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold px-2 py-1.5 rounded-lg transition">
+                                    💬 {c.whatsapp}
+                                  </a>
+                                )}
+                                {c.email && (
+                                  <a href={`mailto:${c.email}`}
+                                    className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold px-2 py-1.5 rounded-lg transition">
+                                    ✉️ {c.email}
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                      {c.recebe_notificacao && (
-                        <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-200 font-semibold">
-                          💬 Recebe Zap
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex gap-2 mt-3 flex-wrap">
-                      {c.whatsapp && (
-                        <a href={`https://wa.me/${c.whatsapp.replace(/\D/g, '')}`} target="_blank"
-                          className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold px-2 py-1.5 rounded-lg transition">
-                          💬 {c.whatsapp}
-                        </a>
-                      )}
-                      {c.email && (
-                        <a href={`mailto:${c.email}`}
-                          className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold px-2 py-1.5 rounded-lg transition">
-                          ✉️ {c.email}
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                    )}
+                    {contatosFinanceiro.length > 0 && (
+                      <div>
+                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">💰 Contatos Financeiro</h3>
+                        <div className="space-y-3">
+                          {contatosFinanceiro.map(c => (
+                            <div key={c.id} className="border border-amber-100 bg-amber-50/30 rounded-xl p-4">
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <p className="font-bold text-gray-800 text-sm">{c.nome}</p>
+                                  {c.cargo && <p className="text-xs text-gray-500">{c.cargo}</p>}
+                                </div>
+                                <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200 font-semibold">
+                                  💰 Financeiro
+                                </span>
+                              </div>
+                              <div className="flex gap-2 mt-3 flex-wrap">
+                                {c.whatsapp && (
+                                  <a href={`https://wa.me/${c.whatsapp.replace(/\D/g, '')}`} target="_blank"
+                                    className="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold px-2 py-1.5 rounded-lg transition">
+                                    💬 {c.whatsapp}
+                                  </a>
+                                )}
+                                {c.email && (
+                                  <a href={`mailto:${c.email}`}
+                                    className="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold px-2 py-1.5 rounded-lg transition">
+                                    ✉️ {c.email}
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
 
@@ -321,7 +445,7 @@ export default function PerfilCliente() {
           </div>
         </div>
 
-        {/* Serviços — placeholder */}
+        {/* Serviços */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <h3 className="font-bold text-gray-700 mb-3">📋 Serviços Realizados</h3>
           <div className="text-center py-6 text-gray-400">
