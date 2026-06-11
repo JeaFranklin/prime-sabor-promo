@@ -158,7 +158,9 @@ export default function EditarPromotora() {
 
   async function salvar() {
     if (!form.nome.trim()) { setErro('Nome é obrigatório.'); return }
+    if (!fotoFile && !fotoAtualUrl) { setErro('📷 Foto de perfil é obrigatória. Adicione uma foto antes de salvar.'); return }
     if (form.cpf && !validarCPF(form.cpf.replace(/\D/g, ''))) { setErro('CPF inválido.'); return }
+    if (form.instagram && !/^@?[\w.]+$/.test(form.instagram)) { setErro('Instagram inválido. Use o formato @usuario (sem espaços ou caracteres especiais).'); return }
     if (servicos.length === 0) { setErro('Selecione pelo menos um tipo de serviço.'); return }
 
     setSalvando(true)
@@ -310,8 +312,18 @@ export default function EditarPromotora() {
             <div>
               <label className="text-xs font-semibold text-gray-500 mb-1 block">Instagram</label>
               <input value={form.instagram} onChange={e => atualizar('instagram', e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-red-400"
+                className={`w-full border rounded-xl px-4 py-2 text-sm focus:outline-none ${
+                  form.instagram && !/^@?[\w.]+$/.test(form.instagram)
+                    ? 'border-red-400 bg-red-50'
+                    : 'border-gray-200 focus:border-red-400'
+                }`}
                 placeholder="@usuario" />
+              {form.instagram && !/^@?[\w.]+$/.test(form.instagram) && (
+                <p className="text-xs text-red-500 mt-1">❌ Use o formato @usuario (sem espaços ou caracteres especiais)</p>
+              )}
+              {form.instagram && /^@?[\w.]+$/.test(form.instagram) && (
+                <p className="text-xs text-green-600 mt-1">✅ Instagram válido</p>
+              )}
             </div>
           </div>
         </div>
