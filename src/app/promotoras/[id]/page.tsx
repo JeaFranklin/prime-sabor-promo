@@ -42,6 +42,13 @@ type FotoTrabalho = {
   created_at: string
 }
 
+type Avaliacao = {
+  id: string
+  nota: number
+  observacao: string
+  created_at: string
+}
+
 function calcularIdade(data: string): number | null {
   if (!data) return null
   const nasc = new Date(data)
@@ -67,7 +74,7 @@ export default function PerfilPromotora() {
   const router = useRouter()
   const [promotora, setPromotora] = useState<Promotora | null>(null)
   const [carregando, setCarregando] = useState(true)
-  const [aba, setAba] = useState<'dados' | 'pagamento' | 'historico'>('dados')
+  const [aba, setAba] = useState<'dados' | 'pagamento' | 'fotos' | 'notas' | 'servicos'>('dados')
 
   // Status
   const [alterandoStatus, setAlterandoStatus] = useState(false)
@@ -81,6 +88,15 @@ export default function PerfilPromotora() {
   const [carregandoFotos, setCarregandoFotos] = useState(false)
   const [uploadandoFoto, setUploadandoFoto] = useState(false)
   const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null)
+
+  // Avaliações
+  const [avaliacoes, setAvaliacoes] = useState<Avaliacao[]>([])
+  const [carregandoAvaliacoes, setCarregandoAvaliacoes] = useState(false)
+  const [novaObservacao, setNovaObservacao] = useState('')
+  const [notaSelecionada, setNotaSelecionada] = useState(0)
+
+  // Serviços da promotora
+  const [servicosPromotora, setServicosPromotora] = useState<{ id: string; nome: string; status: string; data_inicio: string | null; clientes: { nome_empresa: string } | null }[]>([])
 
   useEffect(() => {
     async function carregar() {
@@ -97,8 +113,31 @@ export default function PerfilPromotora() {
   }, [id])
 
   useEffect(() => {
-    if (aba === 'historico' && id) carregarFotos()
+    if (aba === 'fotos' && id) carregarFotos()
+    if (aba === 'notas' && id) carregarAvaliacoes()
+    if (aba === 'servicos' && id) carregarServicos()
   }, [aba, id])
+
+  async function carregarServicos() {
+    const { data } = await supabase
+      .from('escala')
+      .select('servicos(id, nome, status, data_inicio, clientes(nome_empresa))')
+      .eq('promotora_id', id)
+      .order('created_at', { ascending: false })
+    const lista = (data || []).map((e: { servicos: { id: string; nome: string; status: string; data_inicio: string | null; clientes: { nome_empresa: string } | null } | null }) => e.servicos).filter(Boolean)
+    setServicosPromotora(lista as { id: string; nome: string; status: string; data_inicio: string | null; clientes: { nome_empresa: string } | null }[])
+  }
+
+  async function carregarAvaliacoes() {
+    setCarregandoAvaliacoes(true)
+    const { data } = await supabase
+      .from('avaliacoes_promotora')
+      .select('*')
+      .eq('promotora_id', id)
+      .order('created_at', { ascending: false })
+    setAvaliacoes(data || [])
+    setCarregandoAvaliacoes(false)
+  }
 
   async function carregarFotos() {
     setCarregandoFotos(true)
@@ -123,14 +162,44 @@ export default function PerfilPromotora() {
   }
 
   async function darNota(nota: number) {
-    if (!promotora || salvandoNota) return
+    if (!promotora || salvandoNota || nota === 0) return
     setSalvandoNota(true)
-    const { error } = await supabase
-      .from('promotoras')
-      .update({ avaliacao_media: nota })
-      .eq('id', id)
-    if (!error) setPromotora(prev => prev ? { ...prev, avaliacao_media: nota } : prev)
+    // Salva no histórico
+    await supabase.from('avaliacoes_promotora').insert({
+      promotora_id: id,
+      nota,
+      observacao: novaObservacao.trim() || null,
+    })
+    // Recalcula a média buscando todas as notas
+    const { data } = await supabase
+      .from('avaliacoes_promotora')
+      .select('nota')
+      .eq('promotora_id', id)
+    if (data && data.length > 0) {
+      const media = data.reduce((s, a) => s + a.nota, 0) / data.length
+      const mediaArredondada = Math.round(media * 10) / 10
+      await supabase.from('promotoras').update({ avaliacao_media: mediaArredondada }).eq('id', id)
+      setPromotora(prev => prev ? { ...prev, avaliacao_media: mediaArredondada } : prev)
+    }
+    setNovaObservacao('')
+    setNotaSelecionada(0)
+    if (aba === 'notas') carregarAvaliacoes()
     setSalvandoNota(false)
+  }
+
+  async function excluirAvaliacao(avaliacaoId: string) {
+    await supabase.from('avaliacoes_promotora').delete().eq('id', avaliacaoId)
+    const novas = avaliacoes.filter(a => a.id !== avaliacaoId)
+    setAvaliacoes(novas)
+    if (novas.length > 0) {
+      const media = novas.reduce((s, a) => s + a.nota, 0) / novas.length
+      const mediaArredondada = Math.round(media * 10) / 10
+      await supabase.from('promotoras').update({ avaliacao_media: mediaArredondada }).eq('id', id)
+      setPromotora(prev => prev ? { ...prev, avaliacao_media: mediaArredondada } : prev)
+    } else {
+      await supabase.from('promotoras').update({ avaliacao_media: 0 }).eq('id', id)
+      setPromotora(prev => prev ? { ...prev, avaliacao_media: 0 } : prev)
+    }
   }
 
   async function uploadFotoTrabalho(e: React.ChangeEvent<HTMLInputElement>) {
@@ -213,26 +282,27 @@ export default function PerfilPromotora() {
             </div>
           </div>
 
-          {/* Avaliação por estrelas */}
+          {/* Média de avaliação — somente leitura */}
           <div className="mt-4 pt-4 border-t border-gray-100">
-            <p className="text-xs text-gray-400 mb-2 font-semibold">⭐ Avaliação</p>
-            <div className="flex items-center gap-1">
-              {[1, 2, 3, 4, 5].map(n => (
-                <button
-                  key={n}
-                  onClick={() => darNota(n)}
-                  onMouseEnter={() => setNotaHover(n)}
-                  onMouseLeave={() => setNotaHover(0)}
-                  disabled={salvandoNota}
-                  className="text-2xl transition-transform hover:scale-110 disabled:opacity-50"
-                >
-                  {n <= (notaHover || promotora.avaliacao_media) ? '⭐' : '☆'}
-                </button>
-              ))}
-              {promotora.avaliacao_media > 0 && (
-                <span className="text-sm text-gray-500 ml-2 font-semibold">{promotora.avaliacao_media}/5</span>
-              )}
-              {salvandoNota && <span className="text-xs text-gray-400 ml-2">salvando...</span>}
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-400 font-semibold">⭐ Avaliação Média</p>
+              <button onClick={() => setAba('notas')}
+                className="text-xs text-red-500 hover:underline font-semibold">
+                Ver histórico →
+              </button>
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <div className="flex gap-0.5">
+                {[1, 2, 3, 4, 5].map(n => (
+                  <span key={n} className="text-xl">
+                    {n <= Math.round(promotora.avaliacao_media) ? '⭐' : '☆'}
+                  </span>
+                ))}
+              </div>
+              {promotora.avaliacao_media > 0
+                ? <span className="text-sm font-bold text-gray-700">{promotora.avaliacao_media}/5</span>
+                : <span className="text-xs text-gray-400">Nenhuma avaliação ainda</span>
+              }
             </div>
           </div>
 
@@ -277,11 +347,11 @@ export default function PerfilPromotora() {
 
         {/* Abas */}
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="flex border-b border-gray-100">
-            {(['dados', 'pagamento', 'historico'] as const).map(a => (
+          <div className="flex border-b border-gray-100 overflow-x-auto">
+            {(['dados', 'pagamento', 'fotos', 'notas', 'servicos'] as const).map(a => (
               <button key={a} onClick={() => setAba(a)}
-                className={`flex-1 py-3 text-sm font-semibold transition ${aba === a ? 'text-red-600 border-b-2 border-red-600' : 'text-gray-400 hover:text-gray-600'}`}>
-                {a === 'dados' ? '📋 Dados' : a === 'pagamento' ? '💰 Pagamento' : '📸 Fotos'}
+                className={`flex-shrink-0 px-3 py-3 text-xs font-semibold transition ${aba === a ? 'text-red-600 border-b-2 border-red-600' : 'text-gray-400 hover:text-gray-600'}`}>
+                {a === 'dados' ? '📋 Dados' : a === 'pagamento' ? '💰 Pagamento' : a === 'fotos' ? '📸 Fotos' : a === 'notas' ? `⭐ Notas` : '🗂️ Serviços'}
               </button>
             ))}
           </div>
@@ -394,7 +464,7 @@ export default function PerfilPromotora() {
             )}
 
             {/* ABA FOTOS */}
-            {aba === 'historico' && (
+            {aba === 'fotos' && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-bold text-gray-700">Fotos do Trabalho</p>
@@ -430,6 +500,103 @@ export default function PerfilPromotora() {
                       </div>
                     ))}
                   </div>
+                )}
+              </div>
+            )}
+            {/* ABA NOTAS */}
+            {aba === 'notas' && (
+              <div className="space-y-4">
+
+                {/* Formulário para registrar nova nota */}
+                <div className="bg-red-50 border border-red-100 rounded-xl p-4">
+                  <p className="text-xs font-bold text-gray-600 mb-2">📝 Registrar nova avaliação</p>
+                  <div className="flex items-center gap-1 mb-3">
+                    {[1, 2, 3, 4, 5].map(n => (
+                      <button key={n}
+                        onClick={() => setNotaSelecionada(n)}
+                        onMouseEnter={() => setNotaHover(n)}
+                        onMouseLeave={() => setNotaHover(0)}
+                        className="text-2xl transition-transform hover:scale-110">
+                        {n <= (notaHover || notaSelecionada) ? '⭐' : '☆'}
+                      </button>
+                    ))}
+                    {notaSelecionada > 0 && (
+                      <span className="text-sm text-gray-500 ml-1 font-semibold">{notaSelecionada}/5</span>
+                    )}
+                  </div>
+                  <input value={novaObservacao} onChange={e => setNovaObservacao(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-red-400 bg-white mb-2"
+                    placeholder="Observação (opcional): pontualidade, apresentação, resultado..." />
+                  <button onClick={() => darNota(notaSelecionada)}
+                    disabled={salvandoNota || notaSelecionada === 0}
+                    className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-bold py-2 rounded-xl transition">
+                    {salvandoNota ? '⏳ Salvando...' : notaSelecionada === 0 ? 'Selecione uma nota acima' : '✅ Registrar Avaliação'}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-bold text-gray-700">Histórico</p>
+                  {avaliacoes.length > 0 && (
+                    <span className="text-xs bg-yellow-50 text-yellow-700 px-2 py-0.5 rounded-full border border-yellow-200 font-bold">
+                      Média: {(avaliacoes.reduce((s, a) => s + a.nota, 0) / avaliacoes.length).toFixed(1)}/5 · {avaliacoes.length} nota{avaliacoes.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+                {carregandoAvaliacoes ? (
+                  <p className="text-center text-gray-400 py-6">⏳ Carregando...</p>
+                ) : avaliacoes.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400">
+                    <p className="text-3xl mb-2">⭐</p>
+                    <p className="text-sm">Nenhuma avaliação registrada ainda.</p>
+                    <p className="text-xs mt-1">Use o painel de estrelas acima para avaliar.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {avaliacoes.map(a => (
+                      <div key={a.id} className="flex items-start justify-between border border-gray-100 rounded-xl p-3 bg-gray-50">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="font-bold text-sm text-gray-800">
+                              {'⭐'.repeat(a.nota)}{'☆'.repeat(5 - a.nota)}
+                            </span>
+                            <span className="text-xs font-bold text-yellow-600">{a.nota}/5</span>
+                          </div>
+                          {a.observacao && (
+                            <p className="text-xs text-gray-600 mt-1">"{a.observacao}"</p>
+                          )}
+                          <p className="text-xs text-gray-400 mt-1">
+                            {new Date(a.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                        <button onClick={() => excluirAvaliacao(a.id)}
+                          className="text-red-300 hover:text-red-500 text-xs ml-2 flex-shrink-0">× remover</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ABA SERVIÇOS */}
+            {aba === 'servicos' && (
+              <div className="p-4 space-y-3">
+                <p className="text-xs text-gray-400">Serviços em que esta promotora está escalada.</p>
+                {servicosPromotora.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400">
+                    <p className="text-3xl mb-2">🗂️</p>
+                    <p className="text-sm">Nenhum serviço encontrado.</p>
+                  </div>
+                ) : (
+                  servicosPromotora.map(s => (
+                    <Link key={s.id} href={`/servicos/${s.id}`}
+                      className="flex items-center justify-between bg-gray-50 rounded-xl p-3 hover:bg-violet-50 transition">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-800">{s.nome}</p>
+                        <p className="text-xs text-gray-400">{s.clientes?.nome_empresa || '—'}{s.data_inicio ? ` · ${s.data_inicio.split('-').reverse().join('/')}` : ''}</p>
+                      </div>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 capitalize">{s.status}</span>
+                    </Link>
+                  ))
                 )}
               </div>
             )}

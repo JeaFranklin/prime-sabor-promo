@@ -85,22 +85,35 @@ function urlSite(v: string) {
   return `https://${s}`
 }
 
+type ServicoCliente = {
+  id: string
+  nome: string
+  status: string
+  data_inicio: string | null
+  data_fim: string | null
+  tipo_acao: string | null
+  num_promotoras: number
+}
+
 export default function PerfilCliente() {
   const { id } = useParams()
   const [cliente, setCliente] = useState<Cliente | null>(null)
   const [contatos, setContatos] = useState<Contato[]>([])
+  const [servicosCliente, setServicosCliente] = useState<ServicoCliente[]>([])
   const [carregando, setCarregando] = useState(true)
   const [alterandoStatus, setAlterandoStatus] = useState(false)
   const [aba, setAba] = useState<'dados' | 'contatos' | 'endereco'>('dados')
 
   useEffect(() => {
     async function carregar() {
-      const [{ data: cData }, { data: ctData }] = await Promise.all([
+      const [{ data: cData }, { data: ctData }, { data: srvData }] = await Promise.all([
         supabase.from('clientes').select('*').eq('id', id).single(),
         supabase.from('contatos_cliente').select('*').eq('cliente_id', id).order('tipo').order('created_at'),
+        supabase.from('servicos').select('id, nome, status, data_inicio, data_fim, tipo_acao, num_promotoras').eq('cliente_id', id).order('created_at', { ascending: false }),
       ])
       if (cData) setCliente(cData)
       setContatos(ctData || [])
+      setServicosCliente(srvData || [])
       setCarregando(false)
     }
     if (id) carregar()
@@ -447,11 +460,36 @@ export default function PerfilCliente() {
 
         {/* Serviços */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
-          <h3 className="font-bold text-gray-700 mb-3">📋 Serviços Realizados</h3>
-          <div className="text-center py-6 text-gray-400">
-            <p className="text-3xl mb-2">📋</p>
-            <p className="text-sm">Histórico de serviços disponível em breve.</p>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-gray-700">📋 Serviços ({servicosCliente.length})</h3>
+            <Link href={`/servicos/novo`}
+              className="text-xs text-violet-600 font-semibold hover:underline">+ Novo</Link>
           </div>
+          {servicosCliente.length === 0 ? (
+            <div className="text-center py-6 text-gray-400">
+              <p className="text-2xl mb-2">📋</p>
+              <p className="text-sm">Nenhum serviço cadastrado para este cliente.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {servicosCliente.map(s => (
+                <Link key={s.id} href={`/servicos/${s.id}`}
+                  className="flex items-center justify-between py-2.5 px-3 bg-gray-50 rounded-xl hover:bg-violet-50 transition">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">{s.nome}</p>
+                    <p className="text-xs text-gray-400">
+                      {s.data_inicio ? s.data_inicio.split('-').reverse().join('/') : '—'}
+                      {s.data_fim ? ` até ${s.data_fim.split('-').reverse().join('/')}` : ''}
+                      {` · 👥 ${s.num_promotoras}`}
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 capitalize whitespace-nowrap">
+                    {s.status}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

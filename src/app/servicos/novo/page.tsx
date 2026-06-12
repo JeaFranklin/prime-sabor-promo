@@ -1,0 +1,515 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { supabase } from '@/lib/supabase'
+
+type Cliente = { id: string; nome_empresa: string }
+type Promotora = { id: string; nome: string; cidade: string | null; avaliacao_media: number | null }
+
+const TIPOS_ACAO = [
+  { value: 'degustacao', label: '🍽️ Degustação' },
+  { value: 'demonstracao', label: '🎯 Demonstração' },
+  { value: 'abordagem', label: '🗣️ Abordagem' },
+  { value: 'sampling', label: '🎁 Sampling' },
+]
+
+const STATUS_INICIAL = [
+  { value: 'proposta', label: 'Proposta' },
+  { value: 'negociacao', label: 'Negociação' },
+  { value: 'confirmado', label: 'Confirmado' },
+]
+
+export default function NovoServico() {
+  const router = useRouter()
+  const [clientes, setClientes] = useState<Cliente[]>([])
+  const [promotoras, setPromotoras] = useState<Promotora[]>([])
+  const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState('')
+  const [etapa, setEtapa] = useState(1)
+
+  const [form, setForm] = useState({
+    nome: '',
+    cliente_id: '',
+    produto: '',
+    tipo_acao: 'degustacao',
+    data_inicio: '',
+    data_fim: '',
+    horario_inicio: '',
+    horario_fim: '',
+    cep: '',
+    rua: '',
+    numero: '',
+    bairro: '',
+    cidade: '',
+    estado: '',
+    responsavel_local_nome: '',
+    responsavel_local_contato: '',
+    num_promotoras: 1,
+    valor_cliente: '',
+    valor_diaria: '',
+    status: 'proposta',
+    observacoes: '',
+  })
+
+  const [escala, setEscala] = useState<{ promotora_id: string; is_lider: boolean; is_reserva: boolean; valor_diaria: string }[]>([])
+  const [promotoraFiltro, setPromotoraFiltro] = useState('')
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from('clientes').select('id, nome_empresa').order('nome_empresa'),
+      supabase.from('promotoras').select('id, nome, cidade, avaliacao_media').eq('status', 'ativa').order('nome'),
+    ]).then(([c, p]) => {
+      setClientes(c.data || [])
+      setPromotoras(p.data || [])
+    })
+  }, [])
+
+  function set(field: string, value: string | number) {
+    setForm(f => ({ ...f, [field]: value }))
+  }
+
+  async function buscarCEP(cep: string) {
+    const n = cep.replace(/\D/g, '')
+    if (n.length !== 8) return
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${n}/json/`)
+      const data = await res.json()
+      if (!data.erro) {
+        setForm(f => ({ ...f, rua: data.logradouro || f.rua, bairro: data.bairro || f.bairro, cidade: data.localidade || f.cidade, estado: data.uf || f.estado }))
+      }
+    } catch { /* ignora */ }
+  }
+
+  function adicionarPromotora(id: string) {
+    if (escala.find(e => e.promotora_id === id)) return
+    setEscala(prev => [...prev, { promotora_id: id, is_lider: false, is_reserva: false, valor_diaria: form.valor_diaria }])
+  }
+
+  function removerPromotora(id: string) {
+    setEscala(prev => prev.filter(e => e.promotora_id !== id))
+  }
+
+  function toggleLider(id: string) {
+    setEscala(prev => prev.map(e => ({ ...e, is_lider: e.promotora_id === id ? !e.is_lider : false })))
+  }
+
+  function toggleReserva(id: string) {
+    setEscala(prev => prev.map(e => e.promotora_id === id ? { ...e, is_reserva: !e.is_reserva } : e))
+  }
+
+  async function salvar() {
+    if (!form.nome.trim()) { setErro('O nome do serviço é obrigatório.'); return }
+    setSalvando(true)
+    setErro('')
+    try {
+      const payload = {
+        nome: form.nome.trim(),
+        cliente_id: form.cliente_id || null,
+        produto: form.produto.trim() || null,
+        tipo_acao: form.tipo_acao || null,
+        data_inicio: form.data_inicio || null,
+        data_fim: form.data_fim || null,
+        horario_inicio: form.horario_inicio || null,
+        horario_fim: form.horario_fim || null,
+        cep: form.cep.trim() || null,
+        rua: form.rua.trim() || null,
+        numero: form.numero.trim() || null,
+        bairro: form.bairro.trim() || null,
+        cidade: form.cidade.trim() || null,
+        estado: form.estado.trim() || null,
+        responsavel_local_nome: form.responsavel_local_nome.trim() || null,
+        responsavel_local_contato: form.responsavel_local_contato.trim() || null,
+        num_promotoras: Number(form.num_promotoras) || 1,
+        valor_cliente: form.valor_cliente ? Number(form.valor_cliente) : null,
+        valor_diaria: form.valor_diaria ? Number(form.valor_diaria) : null,
+        status: form.status,
+        observacoes: form.observacoes.trim() || null,
+      }
+
+      const { data: novo, error } = await supabase.from('servicos').insert(payload).select('id').single()
+      if (error) throw error
+
+      if (escala.length > 0) {
+        const escalaPayload = escala.map(e => ({
+          servico_id: novo.id,
+          promotora_id: e.promotora_id,
+          is_lider: e.is_lider,
+          is_reserva: e.is_reserva,
+          valor_diaria: e.valor_diaria ? Number(e.valor_diaria) : null,
+          status_confirmacao: 'pendente',
+          status_pagamento: 'pendente',
+        }))
+        const { error: erroEscala } = await supabase.from('escala').insert(escalaPayload)
+        if (erroEscala) console.error('Erro ao salvar escala:', erroEscala)
+      }
+
+      router.push(`/servicos/${novo.id}`)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setErro('Erro ao salvar: ' + msg)
+      console.error(e)
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  const promotorasNaoEscaladas = promotoras.filter(p =>
+    !escala.find(e => e.promotora_id === p.id) &&
+    (p.nome.toLowerCase().includes(promotoraFiltro.toLowerCase()) || (p.cidade || '').toLowerCase().includes(promotoraFiltro.toLowerCase()))
+  )
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-gradient-to-r from-violet-600 to-purple-500 text-white px-4 py-4">
+        <div className="max-w-2xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link href="/servicos" className="text-white/80 hover:text-white text-sm">← Serviços</Link>
+            <span className="text-white/40">|</span>
+            <h1 className="font-black text-lg">🗂️ Novo Serviço</h1>
+          </div>
+        </div>
+      </div>
+
+      {/* Etapas */}
+      <div className="max-w-2xl mx-auto px-4 py-4">
+        <div className="flex gap-2 mb-6">
+          {[
+            { n: 1, label: 'Dados' },
+            { n: 2, label: 'Local' },
+            { n: 3, label: 'Escala' },
+            { n: 4, label: 'Financeiro' },
+          ].map(e => (
+            <button key={e.n} onClick={() => setEtapa(e.n)}
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition ${etapa === e.n ? 'bg-violet-600 text-white' : 'bg-white text-gray-400 border border-gray-200'}`}>
+              {e.n}. {e.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ETAPA 1 — Dados do serviço */}
+        {etapa === 1 && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl shadow-sm p-5 space-y-4">
+              <h2 className="font-bold text-gray-700">📋 Dados do Serviço</h2>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Nome do Serviço *</label>
+                <input value={form.nome} onChange={e => set('nome', e.target.value)}
+                  placeholder='Ex: Ação Iogurte Nestlé — Supermercado Norte — Jun/2026'
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Cliente</label>
+                <select value={form.cliente_id} onChange={e => set('cliente_id', e.target.value)}
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400 bg-white">
+                  <option value="">— Selecionar cliente —</option>
+                  {clientes.map(c => <option key={c.id} value={c.id}>{c.nome_empresa}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Produto / Marca</label>
+                <input value={form.produto} onChange={e => set('produto', e.target.value)}
+                  placeholder='Ex: Iogurte Nestlé Morango'
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Tipo de Ação</label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  {TIPOS_ACAO.map(t => (
+                    <button key={t.value} onClick={() => set('tipo_acao', t.value)}
+                      className={`py-2.5 rounded-xl text-sm font-semibold border transition ${form.tipo_acao === t.value ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-200'}`}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Data Início</label>
+                  <input type="date" value={form.data_inicio} onChange={e => set('data_inicio', e.target.value)}
+                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Data Fim</label>
+                  <input type="date" value={form.data_fim} onChange={e => set('data_fim', e.target.value)}
+                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Horário Início</label>
+                  <input type="time" value={form.horario_inicio} onChange={e => set('horario_inicio', e.target.value)}
+                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Horário Fim</label>
+                  <input type="time" value={form.horario_fim} onChange={e => set('horario_fim', e.target.value)}
+                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Status Inicial</label>
+                <div className="flex gap-2 mt-1 flex-wrap">
+                  {STATUS_INICIAL.map(s => (
+                    <button key={s.value} onClick={() => set('status', s.value)}
+                      className={`px-4 py-2 rounded-xl text-sm font-semibold border transition ${form.status === s.value ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-200'}`}>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Observações</label>
+                <textarea value={form.observacoes} onChange={e => set('observacoes', e.target.value)}
+                  rows={3} placeholder='Informações adicionais sobre o serviço...'
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400 resize-none" />
+              </div>
+            </div>
+
+            <button onClick={() => setEtapa(2)}
+              className="w-full bg-violet-600 text-white font-bold py-3 rounded-xl hover:bg-violet-700 transition">
+              Próximo: Local →
+            </button>
+          </div>
+        )}
+
+        {/* ETAPA 2 — Local */}
+        {etapa === 2 && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl shadow-sm p-5 space-y-4">
+              <h2 className="font-bold text-gray-700">📍 Local do Serviço</h2>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">CEP</label>
+                <input value={form.cep} onChange={e => { set('cep', e.target.value); buscarCEP(e.target.value) }}
+                  placeholder='00000-000'
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Rua / Avenida</label>
+                  <input value={form.rua} onChange={e => set('rua', e.target.value)}
+                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Número</label>
+                  <input value={form.numero} onChange={e => set('numero', e.target.value)}
+                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Bairro</label>
+                <input value={form.bairro} onChange={e => set('bairro', e.target.value)}
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Cidade</label>
+                  <input value={form.cidade} onChange={e => set('cidade', e.target.value)}
+                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Estado</label>
+                  <input value={form.estado} onChange={e => set('estado', e.target.value)} maxLength={2}
+                    placeholder='SP'
+                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400 uppercase" />
+                </div>
+              </div>
+
+              <hr className="border-gray-100" />
+              <h3 className="font-bold text-gray-600 text-sm">👤 Responsável no Local</h3>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Nome do Responsável</label>
+                <input value={form.responsavel_local_nome} onChange={e => set('responsavel_local_nome', e.target.value)}
+                  placeholder='Ex: João — Gerente'
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Contato (WhatsApp / Telefone)</label>
+                <input value={form.responsavel_local_contato} onChange={e => set('responsavel_local_contato', e.target.value)}
+                  placeholder='(00) 00000-0000'
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setEtapa(1)} className="flex-1 border border-gray-300 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50 transition">
+                ← Voltar
+              </button>
+              <button onClick={() => setEtapa(3)} className="flex-1 bg-violet-600 text-white font-bold py-3 rounded-xl hover:bg-violet-700 transition">
+                Próximo: Escala →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ETAPA 3 — Escala */}
+        {etapa === 3 && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl shadow-sm p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-bold text-gray-700">👥 Escala de Promotoras</h2>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">Nº promotoras:</span>
+                  <input type="number" min={1} value={form.num_promotoras}
+                    onChange={e => set('num_promotoras', parseInt(e.target.value) || 1)}
+                    className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:border-violet-400" />
+                </div>
+              </div>
+
+              {/* Promotoras já na escala */}
+              {escala.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase">Escaladas ({escala.length}/{form.num_promotoras})</p>
+                  {escala.map(e => {
+                    const p = promotoras.find(x => x.id === e.promotora_id)
+                    return (
+                      <div key={e.promotora_id} className="flex items-center gap-2 bg-violet-50 rounded-xl p-3">
+                        <div className="w-8 h-8 bg-violet-200 rounded-full flex items-center justify-center text-violet-700 font-bold text-sm flex-shrink-0">
+                          {p?.nome.charAt(0)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-800 truncate">{p?.nome}</p>
+                          <p className="text-xs text-gray-500">{p?.cidade || '—'}</p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => toggleLider(e.promotora_id)}
+                            className={`text-xs px-2 py-1 rounded-lg font-semibold transition ${e.is_lider ? 'bg-yellow-400 text-yellow-900' : 'bg-white border border-gray-200 text-gray-500'}`}>
+                            👑
+                          </button>
+                          <button onClick={() => toggleReserva(e.promotora_id)}
+                            className={`text-xs px-2 py-1 rounded-lg font-semibold transition ${e.is_reserva ? 'bg-orange-200 text-orange-800' : 'bg-white border border-gray-200 text-gray-500'}`}>
+                            🔄
+                          </button>
+                          <button onClick={() => removerPromotora(e.promotora_id)}
+                            className="text-xs px-2 py-1 rounded-lg bg-white border border-gray-200 text-red-400 hover:bg-red-50 transition">
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <p className="text-xs text-gray-400">👑 = Líder &nbsp;|&nbsp; 🔄 = Reserva</p>
+                </div>
+              )}
+
+              {/* Buscar promotoras */}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Adicionar Promotora</p>
+                <input
+                  value={promotoraFiltro}
+                  onChange={e => setPromotoraFiltro(e.target.value)}
+                  placeholder='🔍 Buscar por nome ou cidade...'
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-violet-400 mb-2" />
+                <div className="space-y-1 max-h-48 overflow-y-auto">
+                  {promotorasNaoEscaladas.slice(0, 20).map(p => (
+                    <button key={p.id} onClick={() => adicionarPromotora(p.id)}
+                      className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-violet-50 transition text-left">
+                      <div className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center text-gray-600 font-bold text-xs flex-shrink-0">
+                        {p.nome.charAt(0)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-700 truncate">{p.nome}</p>
+                        <p className="text-xs text-gray-400">{p.cidade || '—'}{p.avaliacao_media ? ` · ⭐ ${p.avaliacao_media}` : ''}</p>
+                      </div>
+                      <span className="text-violet-500 text-xs font-bold">+ Add</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setEtapa(2)} className="flex-1 border border-gray-300 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50 transition">
+                ← Voltar
+              </button>
+              <button onClick={() => setEtapa(4)} className="flex-1 bg-violet-600 text-white font-bold py-3 rounded-xl hover:bg-violet-700 transition">
+                Próximo: Financeiro →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ETAPA 4 — Financeiro */}
+        {etapa === 4 && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl shadow-sm p-5 space-y-4">
+              <h2 className="font-bold text-gray-700">💰 Dados Financeiros</h2>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Valor Total cobrado do Cliente (R$)</label>
+                <input type="number" step="0.01" min="0" value={form.valor_cliente}
+                  onChange={e => set('valor_cliente', e.target.value)}
+                  placeholder='0,00'
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Valor da Diária por Promotora (R$)</label>
+                <input type="number" step="0.01" min="0" value={form.valor_diaria}
+                  onChange={e => set('valor_diaria', e.target.value)}
+                  placeholder='0,00'
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+              </div>
+
+              {/* Resumo financeiro */}
+              {form.valor_cliente && form.valor_diaria && (
+                <div className="bg-gray-50 rounded-xl p-4 space-y-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase">Resumo estimado</p>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Valor do cliente</span>
+                    <span className="font-semibold text-gray-800">R$ {Number(form.valor_cliente).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  {escala.length > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">Custo promotoras ({escala.length} × R$ {Number(form.valor_diaria).toFixed(2)})</span>
+                      <span className="font-semibold text-red-600">- R$ {(escala.length * Number(form.valor_diaria)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
+                  {escala.length > 0 && (
+                    <div className="flex justify-between text-sm border-t border-gray-200 pt-2">
+                      <span className="font-bold text-gray-700">Margem estimada</span>
+                      <span className={`font-bold ${Number(form.valor_cliente) - escala.length * Number(form.valor_diaria) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        R$ {(Number(form.valor_cliente) - escala.length * Number(form.valor_diaria)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        {' '}
+                        ({Math.round((Number(form.valor_cliente) - escala.length * Number(form.valor_diaria)) / Number(form.valor_cliente) * 100)}%)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {erro && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm">{erro}</div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={() => setEtapa(3)} className="flex-1 border border-gray-300 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50 transition">
+                ← Voltar
+              </button>
+              <button onClick={salvar} disabled={salvando}
+                className="flex-1 bg-violet-600 text-white font-bold py-3 rounded-xl hover:bg-violet-700 transition disabled:opacity-50">
+                {salvando ? '⏳ Salvando...' : '✅ Salvar Serviço'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
