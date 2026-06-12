@@ -149,11 +149,13 @@ export default function NovaPromotora() {
       const { data: uploadData, error: uploadErro } = await supabase.storage
         .from('FOTO')
         .upload(nomeArquivo, fotoFile, { upsert: true })
-      if (uploadErro) console.error('Erro upload foto:', uploadErro)
-      else {
-        const { data: urlData } = supabase.storage.from('FOTO').getPublicUrl(uploadData.path)
-        foto_url = urlData.publicUrl
+      if (uploadErro) {
+        setSalvando(false)
+        setErro('Erro ao fazer upload da foto: ' + uploadErro.message)
+        return
       }
+      const { data: urlData } = supabase.storage.from('FOTO').getPublicUrl(uploadData.path)
+      foto_url = urlData.publicUrl
     }
 
     const { error } = await supabase.from('promotoras').insert({
