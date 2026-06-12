@@ -15,6 +15,7 @@ type Promotora = {
   avaliacao_media: number
   total_servicos: number
   instagram: string
+  foto_url: string | null
 }
 
 const STATUS_CORES: Record<string, string> = {
@@ -38,7 +39,7 @@ export default function Promotoras() {
     setCarregando(true)
     const { data, error } = await supabase
       .from('promotoras')
-      .select('id, nome, whatsapp, cidade, bairro, servicos, status, avaliacao_media, total_servicos, instagram')
+      .select('id, nome, whatsapp, cidade, bairro, servicos, status, avaliacao_media, total_servicos, instagram, foto_url')
       .order('nome')
 
     if (error) console.error('Erro ao buscar promotoras:', error)
@@ -119,8 +120,10 @@ export default function Promotoras() {
                 className="block bg-white rounded-2xl shadow-sm p-4 hover:shadow-md transition">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 font-black text-lg">
-                      {p.nome.charAt(0).toUpperCase()}
+                    <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 font-black text-lg overflow-hidden flex-shrink-0">
+                      {p.foto_url
+                        ? <img src={p.foto_url} alt={p.nome} className="w-10 h-10 object-cover rounded-full" />
+                        : p.nome.charAt(0).toUpperCase()}
                     </div>
                     <div>
                       <p className="font-bold text-gray-800">{p.nome}</p>

@@ -270,7 +270,7 @@ export default function NovoServico() {
 
       router.push(`/servicos/${novo.id}`)
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = e instanceof Error ? e.message : (e as { message?: string })?.message || JSON.stringify(e)
       setErro('Erro ao salvar: ' + msg)
       console.error(e)
     } finally {
