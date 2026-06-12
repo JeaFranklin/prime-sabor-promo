@@ -115,11 +115,12 @@ export default function NovoServico() {
   const [escala, setEscala] = useState<{ promotora_id: string; is_lider: boolean; is_reserva: boolean; valor_diaria: string }[]>([])
   const [promotoraFiltro, setPromotoraFiltro] = useState('')
   const [contatosCliente, setContatosCliente] = useState<ContatoCliente[]>([])
+  const [contatosAviso, setContatosAviso] = useState<string[]>([]) // IDs dos contatos selecionados para receber aviso
 
   useEffect(() => {
     Promise.all([
       supabase.from('clientes').select('id, nome_empresa, rua, numero, bairro, cep, cidade, estado, lat, lng').order('nome_empresa'),
-      supabase.from('promotoras').select('id, nome, cidade, avaliacao_media, lat, lng').eq('status', 'ativa').order('nome'),
+      supabase.from('promotoras').select('id, nome, cidade, avaliacao_media, lat, lng').eq('status', 'ativo').order('nome'),
     ]).then(([c, p]) => {
       setClientes((c.data as Cliente[]) || [])
       setPromotoras(p.data || [])
@@ -249,6 +250,9 @@ export default function NovoServico() {
         valor_diaria: form.valor_diaria ? Number(form.valor_diaria) : null,
         status: form.status,
         observacoes: form.observacoes.trim() || null,
+        contatos_aviso: contatosAviso.length > 0
+          ? contatosCliente.filter(c => contatosAviso.includes(c.id)).map(c => ({ id: c.id, nome: c.nome, cargo: c.cargo, whatsapp: c.whatsapp }))
+          : null,
       }
 
       const { data: novo, error } = await supabase.from('servicos').insert(payload).select('id').single()
@@ -590,6 +594,44 @@ export default function NovoServico() {
                   className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
               </div>
             </div>
+
+            {/* Contatos que recebem aviso do serviço */}
+            {contatosCliente.length > 0 && (
+              <div className="bg-white rounded-2xl shadow-sm p-5 space-y-3">
+                <div>
+                  <h3 className="font-bold text-gray-700 text-sm">📣 Quem recebe o aviso deste serviço?</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Selecione um ou mais contatos da empresa que serão notificados quando o serviço for confirmado.</p>
+                </div>
+                <div className="space-y-2">
+                  {contatosCliente.map(c => {
+                    const selecionado = contatosAviso.includes(c.id)
+                    return (
+                      <button key={c.id}
+                        onClick={() => setContatosAviso(prev =>
+                          selecionado ? prev.filter(id => id !== c.id) : [...prev, c.id]
+                        )}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition text-left ${selecionado ? 'border-violet-500 bg-violet-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                        <div className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 transition ${selecionado ? 'bg-violet-600' : 'border-2 border-gray-300'}`}>
+                          {selecionado && <span className="text-white text-xs font-bold">✓</span>}
+                        </div>
+                        <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-600 flex-shrink-0">
+                          {c.nome.charAt(0)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-800 truncate">{c.nome}{c.cargo ? ` — ${c.cargo}` : ''}</p>
+                          <p className="text-xs text-gray-400">{c.whatsapp ? `📱 ${c.whatsapp}` : 'sem WhatsApp'} · {c.tipo === 'financeiro' ? '💰 financeiro' : '📋 geral'}</p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+                {contatosAviso.length > 0 && (
+                  <p className="text-xs text-violet-700 font-semibold">
+                    ✅ {contatosAviso.length} contato{contatosAviso.length > 1 ? 's' : ''} selecionado{contatosAviso.length > 1 ? 's' : ''} para receber o aviso
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="flex gap-3">
               <button onClick={() => setEtapa(1)} className="flex-1 border border-gray-300 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50 transition">
