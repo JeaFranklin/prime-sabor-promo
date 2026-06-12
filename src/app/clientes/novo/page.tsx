@@ -56,6 +56,15 @@ async function buscarDadosCNPJ(cnpj: string) {
   return res.json()
 }
 
+// Extrai domínio limpo de qualquer URL ou texto
+function extrairDominio(site: string): string {
+  return site.trim()
+    .replace(/https?:\/\//, '')
+    .replace(/www\./, '')
+    .split('/')[0]
+    .split('?')[0]
+}
+
 export default function NovoCliente() {
   const router = useRouter()
   const [salvando, setSalvando] = useState(false)
@@ -117,38 +126,34 @@ export default function NovoCliente() {
   }
 
   async function buscarLogo() {
-    const dominio = form.site.replace(/https?:\/\//, '').replace(/www\./, '').split('/')[0]
-    const instagram = form.instagram.replace('@', '')
+    const dominio = form.site ? extrairDominio(form.site) : ''
+    const instagram = form.instagram.replace('@', '').trim()
     if (!dominio && !instagram) { setErro('Informe o site ou Instagram para buscar o logo.'); return }
     setBuscandoLogo(true)
     setErro('')
-    // Tenta Clearbit pelo domínio do site
-    if (dominio) {
+    // 1. Tenta pelo domínio do site (mais confiável)
+    if (dominio && !dominio.includes('instagram.com') && !dominio.includes('facebook.com')) {
       const url = `https://logo.clearbit.com/${dominio}`
       try {
         const res = await fetch(url)
-        if (res.ok) {
-          setLogoPreview(url)
-          atualizar('logo_url', url)
-          setBuscandoLogo(false)
-          return
+        if (res.ok && res.headers.get('content-type')?.startsWith('image')) {
+          setLogoPreview(url); atualizar('logo_url', url); setBuscandoLogo(false); return
         }
       } catch { /* continua */ }
     }
-    // Tenta pelo Instagram
+    // 2. Tenta nome do Instagram + .com.br e .com
     if (instagram) {
-      const url = `https://logo.clearbit.com/${instagram}.com`
-      try {
-        const res = await fetch(url)
-        if (res.ok) {
-          setLogoPreview(url)
-          atualizar('logo_url', url)
-          setBuscandoLogo(false)
-          return
-        }
-      } catch { /* continua */ }
+      for (const sufixo of ['.com.br', '.com']) {
+        const url = `https://logo.clearbit.com/${instagram}${sufixo}`
+        try {
+          const res = await fetch(url)
+          if (res.ok && res.headers.get('content-type')?.startsWith('image')) {
+            setLogoPreview(url); atualizar('logo_url', url); setBuscandoLogo(false); return
+          }
+        } catch { /* continua */ }
+      }
     }
-    setErro('⚠️ Logo não encontrado automaticamente. Informe a URL da imagem manualmente abaixo.')
+    setErro('⚠️ Logo não encontrado automaticamente. Envie do computador ou cole a URL abaixo.')
     setBuscandoLogo(false)
   }
 

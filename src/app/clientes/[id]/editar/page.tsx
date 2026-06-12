@@ -57,6 +57,14 @@ async function buscarDadosCNPJ(cnpj: string) {
   return res.json()
 }
 
+function extrairDominio(site: string): string {
+  return site.trim()
+    .replace(/https?:\/\//, '')
+    .replace(/www\./, '')
+    .split('/')[0]
+    .split('?')[0]
+}
+
 export default function EditarCliente() {
   const { id } = useParams()
   const router = useRouter()
@@ -161,26 +169,32 @@ export default function EditarCliente() {
   }
 
   async function buscarLogo() {
-    const dominio = form.site.replace(/https?:\/\//, '').replace(/www\./, '').split('/')[0]
-    const instagram = form.instagram.replace('@', '')
+    const dominio = form.site ? extrairDominio(form.site) : ''
+    const instagram = form.instagram.replace('@', '').trim()
     if (!dominio && !instagram) { setErro('Informe o site ou Instagram para buscar o logo.'); return }
     setBuscandoLogo(true)
     setErro('')
-    if (dominio) {
+    if (dominio && !dominio.includes('instagram.com') && !dominio.includes('facebook.com')) {
       const url = `https://logo.clearbit.com/${dominio}`
       try {
         const res = await fetch(url)
-        if (res.ok) { setLogoPreview(url); atualizar('logo_url', url); setBuscandoLogo(false); return }
+        if (res.ok && res.headers.get('content-type')?.startsWith('image')) {
+          setLogoPreview(url); atualizar('logo_url', url); setBuscandoLogo(false); return
+        }
       } catch { /* continua */ }
     }
     if (instagram) {
-      const url = `https://logo.clearbit.com/${instagram}.com`
-      try {
-        const res = await fetch(url)
-        if (res.ok) { setLogoPreview(url); atualizar('logo_url', url); setBuscandoLogo(false); return }
-      } catch { /* continua */ }
+      for (const sufixo of ['.com.br', '.com']) {
+        const url = `https://logo.clearbit.com/${instagram}${sufixo}`
+        try {
+          const res = await fetch(url)
+          if (res.ok && res.headers.get('content-type')?.startsWith('image')) {
+            setLogoPreview(url); atualizar('logo_url', url); setBuscandoLogo(false); return
+          }
+        } catch { /* continua */ }
+      }
     }
-    setErro('⚠️ Logo não encontrado automaticamente. Informe a URL da imagem manualmente.')
+    setErro('⚠️ Logo não encontrado automaticamente. Envie do computador ou cole a URL abaixo.')
     setBuscandoLogo(false)
   }
 
