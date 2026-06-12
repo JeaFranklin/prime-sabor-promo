@@ -33,10 +33,9 @@ type Promotora = {
   avaliacao_media: number | null
   lat: number | null
   lng: number | null
-  servicos: string[] | null
 }
 
-type PromotoraComDistancia = Promotora & { distancia_km: number | null; temExperiencia: boolean }
+type PromotoraComDistancia = Promotora & { distancia_km: number | null }
 
 const TIPOS_ACAO = [
   { value: 'degustacao', label: '🍽️ Degustação' },
@@ -120,7 +119,7 @@ export default function NovoServico() {
   useEffect(() => {
     Promise.all([
       supabase.from('clientes').select('id, nome_empresa, rua, numero, bairro, cep, cidade, estado, lat, lng').order('nome_empresa'),
-      supabase.from('promotoras').select('id, nome, cidade, avaliacao_media, lat, lng, servicos').eq('status', 'ativa').order('nome'),
+      supabase.from('promotoras').select('id, nome, cidade, avaliacao_media, lat, lng').eq('status', 'ativa').order('nome'),
     ]).then(([c, p]) => {
       setClientes((c.data as Cliente[]) || [])
       setPromotoras(p.data || [])
@@ -185,16 +184,13 @@ export default function NovoServico() {
     setGeocodificando(false)
   }
 
-  // Promotoras ordenadas por distância ao serviço + match de tipo
+  // Promotoras ordenadas por distância ao serviço (sem coordenadas vão ao final)
   const promotorasOrdenadas: PromotoraComDistancia[] = promotoras.map(p => {
     const distancia_km = (servicoLat && servicoLng && p.lat && p.lng)
       ? haversineKm(servicoLat, servicoLng, p.lat, p.lng)
       : null
-    const temExperiencia = (p.servicos || []).some(s => s.toLowerCase().includes(form.tipo_acao.toLowerCase())) ||
-      (p.servicos || []).some(s => form.tipo_acao.toLowerCase().includes(s.toLowerCase()))
-    return { ...p, distancia_km, temExperiencia }
+    return { ...p, distancia_km }
   }).sort((a, b) => {
-    // Com coordenadas: ordena por distância. Sem: mantém ordem original
     if (a.distancia_km !== null && b.distancia_km !== null) return a.distancia_km - b.distancia_km
     if (a.distancia_km !== null) return -1
     if (b.distancia_km !== null) return 1
@@ -642,10 +638,7 @@ export default function NovoServico() {
                           {p?.nome.charAt(0)}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1">
-                            <p className="text-sm font-semibold text-gray-800 truncate">{p?.nome}</p>
-                            {p?.temExperiencia && <span className="text-xs text-green-600">✔ experiência</span>}
-                          </div>
+                          <p className="text-sm font-semibold text-gray-800 truncate">{p?.nome}</p>
                           <p className="text-xs text-gray-500">
                             {p?.cidade || '—'}
                             {p?.distancia_km != null ? ` · 📍 ${p.distancia_km.toFixed(1)} km` : ''}
@@ -682,21 +675,23 @@ export default function NovoServico() {
                   onChange={e => setPromotoraFiltro(e.target.value)}
                   placeholder='🔍 Buscar por nome ou cidade...'
                   className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-violet-400 mb-2" />
-                <div className="space-y-1 max-h-64 overflow-y-auto">
-                  {promotorasNaoEscaladas.slice(0, 20).map(p => (
+                <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
+                  {promotorasNaoEscaladas.length === 0 && (
+                    <p className="text-sm text-gray-400 text-center py-4">Nenhuma promotora ativa encontrada.</p>
+                  )}
+                  {promotorasNaoEscaladas.map((p, idx) => (
                     <button key={p.id} onClick={() => adicionarPromotora(p.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition text-left ${p.temExperiencia ? 'hover:bg-green-50' : 'hover:bg-violet-50'}`}>
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${p.temExperiencia ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                        {p.nome.charAt(0)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-violet-50 transition text-left border border-transparent hover:border-violet-200">
+                      <div className="w-7 h-7 bg-gray-100 rounded-full flex items-center justify-center font-bold text-xs text-gray-600 flex-shrink-0">
+                        {servicoLat ? idx + 1 : p.nome.charAt(0)}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1">
-                          <p className="text-sm font-semibold text-gray-700 truncate">{p.nome}</p>
-                          {p.temExperiencia && <span className="text-xs text-green-600 flex-shrink-0">✔</span>}
-                        </div>
+                        <p className="text-sm font-semibold text-gray-700 truncate">{p.nome}</p>
                         <p className="text-xs text-gray-400">
                           {p.cidade || '—'}
-                          {p.distancia_km != null ? ` · 📍 ${p.distancia_km.toFixed(1)} km` : ''}
+                          {p.distancia_km != null
+                            ? <span className="text-violet-600 font-semibold"> · 📍 {p.distancia_km < 1 ? `${Math.round(p.distancia_km * 1000)} m` : `${p.distancia_km.toFixed(1)} km`}</span>
+                            : <span className="text-gray-300"> · sem localização</span>}
                           {p.avaliacao_media ? ` · ⭐ ${p.avaliacao_media}` : ''}
                         </p>
                       </div>
@@ -704,9 +699,7 @@ export default function NovoServico() {
                     </button>
                   ))}
                 </div>
-                {servicoLat && (
-                  <p className="text-xs text-gray-400 mt-2">✔ verde = tem experiência com {form.tipo_acao}</p>
-                )}
+                <p className="text-xs text-gray-400 mt-1">{promotorasNaoEscaladas.length} promotora{promotorasNaoEscaladas.length !== 1 ? 's' : ''} disponível{promotorasNaoEscaladas.length !== 1 ? 'is' : ''}{servicoLat ? ' · ordenadas por distância' : ''}</p>
               </div>
             </div>
 
