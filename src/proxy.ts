@@ -29,14 +29,12 @@ export async function middleware(request: NextRequest) {
 
   const isLoginPage = request.nextUrl.pathname === '/login'
 
-  // Não logado e tentando acessar página protegida → redireciona pro login
   if (!user && !isLoginPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // Já logado e tentando acessar /login → redireciona pro início
   if (user && isLoginPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/'
