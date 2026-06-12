@@ -65,7 +65,8 @@ export default function Servicos() {
       .select('id, nome, produto, tipo_acao, data_inicio, data_fim, status, num_promotoras, valor_cliente, cidade, estado, clientes(nome_empresa)')
       .order('created_at', { ascending: false })
     if (error) console.error('Erro ao buscar serviços:', error)
-    else setServicos((data as Servico[]) || [])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    else setServicos((data as unknown as Servico[]) || [])
     setCarregando(false)
   }
 

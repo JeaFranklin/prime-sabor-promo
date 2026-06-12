@@ -124,7 +124,8 @@ export default function PerfilPromotora() {
       .select('servicos(id, nome, status, data_inicio, clientes(nome_empresa))')
       .eq('promotora_id', id)
       .order('created_at', { ascending: false })
-    const lista = (data || []).map((e: { servicos: { id: string; nome: string; status: string; data_inicio: string | null; clientes: { nome_empresa: string } | null } | null }) => e.servicos).filter(Boolean)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const lista = (data || []).map((e: any) => Array.isArray(e.servicos) ? e.servicos[0] : e.servicos).filter(Boolean)
     setServicosPromotora(lista as { id: string; nome: string; status: string; data_inicio: string | null; clientes: { nome_empresa: string } | null }[])
   }
 
