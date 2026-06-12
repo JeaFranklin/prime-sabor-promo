@@ -18,6 +18,14 @@ type Cliente = {
   lng: number | null
 }
 
+type ContatoCliente = {
+  id: string
+  nome: string
+  cargo: string | null
+  whatsapp: string | null
+  tipo: string
+}
+
 type Promotora = {
   id: string
   nome: string
@@ -107,6 +115,7 @@ export default function NovoServico() {
 
   const [escala, setEscala] = useState<{ promotora_id: string; is_lider: boolean; is_reserva: boolean; valor_diaria: string }[]>([])
   const [promotoraFiltro, setPromotoraFiltro] = useState('')
+  const [contatosCliente, setContatosCliente] = useState<ContatoCliente[]>([])
 
   useEffect(() => {
     Promise.all([
@@ -117,6 +126,17 @@ export default function NovoServico() {
       setPromotoras(p.data || [])
     })
   }, [])
+
+  // Busca contatos quando cliente muda
+  useEffect(() => {
+    if (!form.cliente_id) { setContatosCliente([]); return }
+    supabase
+      .from('contatos_cliente')
+      .select('id, nome, cargo, whatsapp, tipo')
+      .eq('cliente_id', form.cliente_id)
+      .order('tipo')
+      .then(({ data }) => setContatosCliente(data || []))
+  }, [form.cliente_id])
 
   function set(field: string, value: string | number | boolean) {
     setForm(f => ({ ...f, [field]: value }))
@@ -532,6 +552,33 @@ export default function NovoServico() {
 
               <hr className="border-gray-100" />
               <h3 className="font-bold text-gray-600 text-sm">👤 Responsável no Local</h3>
+
+              {/* Seletor de contatos do cliente */}
+              {contatosCliente.length > 0 && (
+                <div>
+                  <p className="text-xs text-gray-400 mb-2">Selecione um contato do cliente ou preencha manualmente:</p>
+                  <div className="space-y-2">
+                    {contatosCliente.map(c => (
+                      <button key={c.id}
+                        onClick={() => setForm(f => ({
+                          ...f,
+                          responsavel_local_nome: c.cargo ? `${c.nome} — ${c.cargo}` : c.nome,
+                          responsavel_local_contato: c.whatsapp || '',
+                        }))}
+                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl border transition text-left ${form.responsavel_local_nome.startsWith(c.nome) ? 'border-violet-400 bg-violet-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                        <div className="w-7 h-7 bg-gray-100 rounded-full flex items-center justify-center text-xs font-bold text-gray-600 flex-shrink-0">
+                          {c.nome.charAt(0)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-800 truncate">{c.nome}{c.cargo ? ` — ${c.cargo}` : ''}</p>
+                          <p className="text-xs text-gray-400">{c.whatsapp || 'sem WhatsApp'} · {c.tipo === 'financeiro' ? '💰 financeiro' : '📋 geral'}</p>
+                        </div>
+                        {form.responsavel_local_nome.startsWith(c.nome) && <span className="text-violet-600 text-xs font-bold">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="text-xs font-semibold text-gray-500 uppercase">Nome do Responsável</label>
