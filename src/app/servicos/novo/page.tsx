@@ -5,14 +5,37 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 
-type Cliente = { id: string; nome_empresa: string }
-type Promotora = { id: string; nome: string; cidade: string | null; avaliacao_media: number | null }
+type Cliente = {
+  id: string
+  nome_empresa: string
+  rua: string | null
+  numero: string | null
+  bairro: string | null
+  cep: string | null
+  cidade: string | null
+  estado: string | null
+  lat: number | null
+  lng: number | null
+}
+
+type Promotora = {
+  id: string
+  nome: string
+  cidade: string | null
+  avaliacao_media: number | null
+  lat: number | null
+  lng: number | null
+  servicos: string[] | null
+}
+
+type PromotoraComDistancia = Promotora & { distancia_km: number | null; temExperiencia: boolean }
 
 const TIPOS_ACAO = [
   { value: 'degustacao', label: '🍽️ Degustação' },
   { value: 'demonstracao', label: '🎯 Demonstração' },
   { value: 'abordagem', label: '🗣️ Abordagem' },
   { value: 'sampling', label: '🎁 Sampling' },
+  { value: 'repositor', label: '📦 Repositor' },
 ]
 
 const STATUS_INICIAL = [
@@ -21,6 +44,24 @@ const STATUS_INICIAL = [
   { value: 'confirmado', label: 'Confirmado' },
 ]
 
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+async function geocodificar(endereco: string): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(endereco)}&limit=1&countrycodes=br`
+    const res = await fetch(url, { headers: { 'User-Agent': 'GustPro/1.0', 'Accept-Language': 'pt-BR' } })
+    const data = await res.json()
+    if (data && data[0]) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) }
+  } catch { /* ignora */ }
+  return null
+}
+
 export default function NovoServico() {
   const router = useRouter()
   const [clientes, setClientes] = useState<Cliente[]>([])
@@ -28,6 +69,11 @@ export default function NovoServico() {
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
   const [etapa, setEtapa] = useState(1)
+
+  // Geolocalização do serviço
+  const [servicoLat, setServicoLat] = useState<number | null>(null)
+  const [servicoLng, setServicoLng] = useState<number | null>(null)
+  const [geocodificando, setGeocodificando] = useState(false)
 
   const [form, setForm] = useState({
     nome: '',
@@ -38,6 +84,12 @@ export default function NovoServico() {
     data_fim: '',
     horario_inicio: '',
     horario_fim: '',
+    horario_alternado: false,
+    horario_inicio_2: '',
+    horario_fim_2: '',
+    descanso_duracao: '',
+    descanso_inicio_min: '',
+    mesmo_endereco_cliente: false,
     cep: '',
     rua: '',
     numero: '',
@@ -58,15 +110,15 @@ export default function NovoServico() {
 
   useEffect(() => {
     Promise.all([
-      supabase.from('clientes').select('id, nome_empresa').order('nome_empresa'),
-      supabase.from('promotoras').select('id, nome, cidade, avaliacao_media').eq('status', 'ativa').order('nome'),
+      supabase.from('clientes').select('id, nome_empresa, rua, numero, bairro, cep, cidade, estado, lat, lng').order('nome_empresa'),
+      supabase.from('promotoras').select('id, nome, cidade, avaliacao_media, lat, lng, servicos').eq('status', 'ativa').order('nome'),
     ]).then(([c, p]) => {
-      setClientes(c.data || [])
+      setClientes((c.data as Cliente[]) || [])
       setPromotoras(p.data || [])
     })
   }, [])
 
-  function set(field: string, value: string | number) {
+  function set(field: string, value: string | number | boolean) {
     setForm(f => ({ ...f, [field]: value }))
   }
 
@@ -81,6 +133,53 @@ export default function NovoServico() {
       }
     } catch { /* ignora */ }
   }
+
+  function usarEnderecoCliente() {
+    const cliente = clientes.find(c => c.id === form.cliente_id)
+    if (!cliente) return
+    setForm(f => ({
+      ...f,
+      rua: cliente.rua || '',
+      numero: cliente.numero || '',
+      bairro: cliente.bairro || '',
+      cep: cliente.cep || '',
+      cidade: cliente.cidade || '',
+      estado: cliente.estado || '',
+      mesmo_endereco_cliente: true,
+    }))
+    if (cliente.lat && cliente.lng) {
+      setServicoLat(cliente.lat)
+      setServicoLng(cliente.lng)
+    }
+  }
+
+  async function obterGeolocalizacao() {
+    const partes = [form.rua, form.numero, form.bairro, form.cidade, form.estado, 'Brasil'].filter(Boolean).join(', ')
+    if (!partes.trim()) return
+    setGeocodificando(true)
+    const geo = await geocodificar(partes)
+    if (geo) {
+      setServicoLat(geo.lat)
+      setServicoLng(geo.lng)
+    }
+    setGeocodificando(false)
+  }
+
+  // Promotoras ordenadas por distância ao serviço + match de tipo
+  const promotorasOrdenadas: PromotoraComDistancia[] = promotoras.map(p => {
+    const distancia_km = (servicoLat && servicoLng && p.lat && p.lng)
+      ? haversineKm(servicoLat, servicoLng, p.lat, p.lng)
+      : null
+    const temExperiencia = (p.servicos || []).some(s => s.toLowerCase().includes(form.tipo_acao.toLowerCase())) ||
+      (p.servicos || []).some(s => form.tipo_acao.toLowerCase().includes(s.toLowerCase()))
+    return { ...p, distancia_km, temExperiencia }
+  }).sort((a, b) => {
+    // Com coordenadas: ordena por distância. Sem: mantém ordem original
+    if (a.distancia_km !== null && b.distancia_km !== null) return a.distancia_km - b.distancia_km
+    if (a.distancia_km !== null) return -1
+    if (b.distancia_km !== null) return 1
+    return 0
+  })
 
   function adicionarPromotora(id: string) {
     if (escala.find(e => e.promotora_id === id)) return
@@ -113,12 +212,20 @@ export default function NovoServico() {
         data_fim: form.data_fim || null,
         horario_inicio: form.horario_inicio || null,
         horario_fim: form.horario_fim || null,
+        horario_alternado: form.horario_alternado,
+        horario_inicio_2: form.horario_alternado ? (form.horario_inicio_2 || null) : null,
+        horario_fim_2: form.horario_alternado ? (form.horario_fim_2 || null) : null,
+        descanso_duracao: form.descanso_duracao ? Number(form.descanso_duracao) : null,
+        descanso_inicio_min: form.descanso_inicio_min ? Number(form.descanso_inicio_min) : null,
+        mesmo_endereco_cliente: form.mesmo_endereco_cliente,
         cep: form.cep.trim() || null,
         rua: form.rua.trim() || null,
         numero: form.numero.trim() || null,
         bairro: form.bairro.trim() || null,
         cidade: form.cidade.trim() || null,
         estado: form.estado.trim() || null,
+        lat: servicoLat,
+        lng: servicoLng,
         responsavel_local_nome: form.responsavel_local_nome.trim() || null,
         responsavel_local_contato: form.responsavel_local_contato.trim() || null,
         num_promotoras: Number(form.num_promotoras) || 1,
@@ -155,10 +262,13 @@ export default function NovoServico() {
     }
   }
 
-  const promotorasNaoEscaladas = promotoras.filter(p =>
+  const promotorasNaoEscaladas = promotorasOrdenadas.filter(p =>
     !escala.find(e => e.promotora_id === p.id) &&
-    (p.nome.toLowerCase().includes(promotoraFiltro.toLowerCase()) || (p.cidade || '').toLowerCase().includes(promotoraFiltro.toLowerCase()))
+    (p.nome.toLowerCase().includes(promotoraFiltro.toLowerCase()) ||
+      (p.cidade || '').toLowerCase().includes(promotoraFiltro.toLowerCase()))
   )
+
+  const clienteSelecionado = clientes.find(c => c.id === form.cliente_id)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -242,17 +352,63 @@ export default function NovoServico() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 uppercase">Horário Início</label>
+              {/* Horários — 1º turno */}
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">
+                  {form.horario_alternado ? '🕐 Turno 1' : '🕐 Horário do Serviço'}
+                </label>
+                <div className="grid grid-cols-2 gap-3 mt-1">
                   <input type="time" value={form.horario_inicio} onChange={e => set('horario_inicio', e.target.value)}
-                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 uppercase">Horário Fim</label>
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
                   <input type="time" value={form.horario_fim} onChange={e => set('horario_fim', e.target.value)}
-                    className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
                 </div>
+                <p className="text-xs text-gray-400 mt-1">Entrada · Saída</p>
+              </div>
+
+              {/* Toggle: horário alternado */}
+              <button onClick={() => set('horario_alternado', !form.horario_alternado)}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition text-sm font-semibold ${form.horario_alternado ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-gray-200 bg-white text-gray-500'}`}>
+                <span>🔁 Serviço tem horário alternado (2 turnos)?</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${form.horario_alternado ? 'bg-violet-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                  {form.horario_alternado ? 'SIM' : 'NÃO'}
+                </span>
+              </button>
+
+              {/* Turno 2 */}
+              {form.horario_alternado && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase">🕐 Turno 2</label>
+                  <div className="grid grid-cols-2 gap-3 mt-1">
+                    <input type="time" value={form.horario_inicio_2} onChange={e => set('horario_inicio_2', e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                    <input type="time" value={form.horario_fim_2} onChange={e => set('horario_fim_2', e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Entrada · Saída do 2º turno</p>
+                </div>
+              )}
+
+              {/* Descanso */}
+              <div className="bg-blue-50 rounded-xl p-4 space-y-3">
+                <p className="text-xs font-semibold text-blue-700">☕ Tempo de Descanso</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-500">Duração (minutos)</label>
+                    <input type="number" min={0} value={form.descanso_duracao} onChange={e => set('descanso_duracao', e.target.value)}
+                      placeholder='Ex: 60'
+                      className="w-full mt-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-violet-400 bg-white" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">Começa após (min. de início)</label>
+                    <input type="number" min={0} value={form.descanso_inicio_min} onChange={e => set('descanso_inicio_min', e.target.value)}
+                      placeholder='Ex: 240'
+                      className="w-full mt-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-violet-400 bg-white" />
+                  </div>
+                </div>
+                <p className="text-xs text-blue-500">
+                  Ex: descanso de 60 min começando 240 min (4h) após o início do serviço.
+                </p>
               </div>
 
               <div>
@@ -287,6 +443,33 @@ export default function NovoServico() {
           <div className="space-y-4">
             <div className="bg-white rounded-2xl shadow-sm p-5 space-y-4">
               <h2 className="font-bold text-gray-700">📍 Local do Serviço</h2>
+
+              {/* Toggle: mesmo endereço do cliente */}
+              {clienteSelecionado && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="text-2xl">🏢</div>
+                    <div className="flex-1">
+                      <p className="text-sm font-bold text-gray-700">O serviço é no endereço do cliente?</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {[clienteSelecionado.rua, clienteSelecionado.numero, clienteSelecionado.bairro, clienteSelecionado.cidade, clienteSelecionado.estado].filter(Boolean).join(', ') || 'Endereço não cadastrado no cliente'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={usarEnderecoCliente}
+                      className={`flex-1 py-2 rounded-xl text-sm font-bold border transition ${form.mesmo_endereco_cliente ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-green-50'}`}>
+                      ✅ Sim, usar o mesmo
+                    </button>
+                    <button
+                      onClick={() => set('mesmo_endereco_cliente', false)}
+                      className={`flex-1 py-2 rounded-xl text-sm font-bold border transition ${!form.mesmo_endereco_cliente ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-gray-600 border-gray-300 hover:bg-orange-50'}`}>
+                      📍 Não, é outro local
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="text-xs font-semibold text-gray-500 uppercase">CEP</label>
@@ -328,6 +511,25 @@ export default function NovoServico() {
                 </div>
               </div>
 
+              {/* Geolocalização */}
+              <div className="flex items-center gap-3">
+                <button onClick={obterGeolocalizacao} disabled={geocodificando || !form.rua}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-300 text-gray-600 text-sm font-semibold hover:bg-gray-50 transition disabled:opacity-40">
+                  {geocodificando ? '⏳ Localizando...' : '🗺️ Obter Geolocalização'}
+                </button>
+                {servicoLat && servicoLng && (
+                  <div className="text-xs text-green-600 font-semibold">
+                    ✅ Localização obtida
+                  </div>
+                )}
+              </div>
+              {servicoLat && servicoLng && (
+                <div className="bg-green-50 rounded-xl p-3">
+                  <p className="text-xs text-green-700 font-semibold">📌 Coordenadas salvas: {servicoLat.toFixed(4)}, {servicoLng.toFixed(4)}</p>
+                  <p className="text-xs text-green-600 mt-0.5">As promotoras serão ordenadas por distância a este ponto na etapa de escala.</p>
+                </div>
+              )}
+
               <hr className="border-gray-100" />
               <h3 className="font-bold text-gray-600 text-sm">👤 Responsável no Local</h3>
 
@@ -364,27 +566,43 @@ export default function NovoServico() {
               <div className="flex items-center justify-between">
                 <h2 className="font-bold text-gray-700">👥 Escala de Promotoras</h2>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500">Nº promotoras:</span>
+                  <span className="text-xs text-gray-500">Nº:</span>
                   <input type="number" min={1} value={form.num_promotoras}
                     onChange={e => set('num_promotoras', parseInt(e.target.value) || 1)}
-                    className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:border-violet-400" />
+                    className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:border-violet-400" />
                 </div>
               </div>
+
+              {servicoLat ? (
+                <div className="bg-violet-50 rounded-xl px-3 py-2">
+                  <p className="text-xs text-violet-700 font-semibold">📍 Sugerindo por proximidade ao local do serviço · Tipo: {form.tipo_acao}</p>
+                </div>
+              ) : (
+                <div className="bg-yellow-50 rounded-xl px-3 py-2">
+                  <p className="text-xs text-yellow-700">💡 Obtenha a geolocalização no passo "Local" para ver as promotoras mais próximas em ordem de distância.</p>
+                </div>
+              )}
 
               {/* Promotoras já na escala */}
               {escala.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-gray-500 uppercase">Escaladas ({escala.length}/{form.num_promotoras})</p>
                   {escala.map(e => {
-                    const p = promotoras.find(x => x.id === e.promotora_id)
+                    const p = promotorasOrdenadas.find(x => x.id === e.promotora_id)
                     return (
                       <div key={e.promotora_id} className="flex items-center gap-2 bg-violet-50 rounded-xl p-3">
                         <div className="w-8 h-8 bg-violet-200 rounded-full flex items-center justify-center text-violet-700 font-bold text-sm flex-shrink-0">
                           {p?.nome.charAt(0)}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-800 truncate">{p?.nome}</p>
-                          <p className="text-xs text-gray-500">{p?.cidade || '—'}</p>
+                          <div className="flex items-center gap-1">
+                            <p className="text-sm font-semibold text-gray-800 truncate">{p?.nome}</p>
+                            {p?.temExperiencia && <span className="text-xs text-green-600">✔ experiência</span>}
+                          </div>
+                          <p className="text-xs text-gray-500">
+                            {p?.cidade || '—'}
+                            {p?.distancia_km != null ? ` · 📍 ${p.distancia_km.toFixed(1)} km` : ''}
+                          </p>
                         </div>
                         <div className="flex items-center gap-1">
                           <button onClick={() => toggleLider(e.promotora_id)}
@@ -409,27 +627,39 @@ export default function NovoServico() {
 
               {/* Buscar promotoras */}
               <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Adicionar Promotora</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                  {servicoLat ? '📍 Mais próximas primeiro' : 'Adicionar Promotora'}
+                </p>
                 <input
                   value={promotoraFiltro}
                   onChange={e => setPromotoraFiltro(e.target.value)}
                   placeholder='🔍 Buscar por nome ou cidade...'
                   className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-violet-400 mb-2" />
-                <div className="space-y-1 max-h-48 overflow-y-auto">
+                <div className="space-y-1 max-h-64 overflow-y-auto">
                   {promotorasNaoEscaladas.slice(0, 20).map(p => (
                     <button key={p.id} onClick={() => adicionarPromotora(p.id)}
-                      className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-violet-50 transition text-left">
-                      <div className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center text-gray-600 font-bold text-xs flex-shrink-0">
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition text-left ${p.temExperiencia ? 'hover:bg-green-50' : 'hover:bg-violet-50'}`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0 ${p.temExperiencia ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
                         {p.nome.charAt(0)}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-700 truncate">{p.nome}</p>
-                        <p className="text-xs text-gray-400">{p.cidade || '—'}{p.avaliacao_media ? ` · ⭐ ${p.avaliacao_media}` : ''}</p>
+                        <div className="flex items-center gap-1">
+                          <p className="text-sm font-semibold text-gray-700 truncate">{p.nome}</p>
+                          {p.temExperiencia && <span className="text-xs text-green-600 flex-shrink-0">✔</span>}
+                        </div>
+                        <p className="text-xs text-gray-400">
+                          {p.cidade || '—'}
+                          {p.distancia_km != null ? ` · 📍 ${p.distancia_km.toFixed(1)} km` : ''}
+                          {p.avaliacao_media ? ` · ⭐ ${p.avaliacao_media}` : ''}
+                        </p>
                       </div>
-                      <span className="text-violet-500 text-xs font-bold">+ Add</span>
+                      <span className="text-violet-500 text-xs font-bold flex-shrink-0">+ Add</span>
                     </button>
                   ))}
                 </div>
+                {servicoLat && (
+                  <p className="text-xs text-gray-400 mt-2">✔ verde = tem experiência com {form.tipo_acao}</p>
+                )}
               </div>
             </div>
 
@@ -466,7 +696,6 @@ export default function NovoServico() {
                   className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
               </div>
 
-              {/* Resumo financeiro */}
               {form.valor_cliente && form.valor_diaria && (
                 <div className="bg-gray-50 rounded-xl p-4 space-y-2">
                   <p className="text-xs font-semibold text-gray-500 uppercase">Resumo estimado</p>
@@ -485,8 +714,7 @@ export default function NovoServico() {
                       <span className="font-bold text-gray-700">Margem estimada</span>
                       <span className={`font-bold ${Number(form.valor_cliente) - escala.length * Number(form.valor_diaria) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         R$ {(Number(form.valor_cliente) - escala.length * Number(form.valor_diaria)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        {' '}
-                        ({Math.round((Number(form.valor_cliente) - escala.length * Number(form.valor_diaria)) / Number(form.valor_cliente) * 100)}%)
+                        {' '}({Math.round((Number(form.valor_cliente) - escala.length * Number(form.valor_diaria)) / Number(form.valor_cliente) * 100)}%)
                       </span>
                     </div>
                   )}
@@ -498,7 +726,7 @@ export default function NovoServico() {
               <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm">{erro}</div>
             )}
 
-            <div className="flex gap-3">
+            <div className="flex gap-3 pb-8">
               <button onClick={() => setEtapa(3)} className="flex-1 border border-gray-300 text-gray-600 font-bold py-3 rounded-xl hover:bg-gray-50 transition">
                 ← Voltar
               </button>
