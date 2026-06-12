@@ -65,11 +65,30 @@ function extrairDominio(site: string): string {
     .split('?')[0]
 }
 
+function dominiosDaEmpresa(nome: string): string[] {
+  const base = nome.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim().split(/\s+/).join('')
+  return [`${base}.com.br`, `${base}.com`]
+}
+
+async function tentarClearbit(dominio: string): Promise<string | null> {
+  if (!dominio || dominio.includes('instagram') || dominio.includes('facebook')) return null
+  try {
+    const url = `https://logo.clearbit.com/${dominio}`
+    const res = await fetch(url)
+    if (res.ok && res.headers.get('content-type')?.startsWith('image')) return url
+  } catch { /* ignora */ }
+  return null
+}
+
 export default function EditarCliente() {
   const { id } = useParams()
   const router = useRouter()
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
+  const [aviso, setAviso] = useState('')
   const [cnpjErro, setCnpjErro] = useState('')
   const [buscandoCNPJ, setBuscandoCNPJ] = useState(false)
   const [cnpjOk, setCnpjOk] = useState('')
@@ -119,7 +138,10 @@ export default function EditarCliente() {
           observacoes: cData.observacoes || '',
           logo_url: cData.logo_url || '',
         })
-        if (cData.logo_url) setLogoPreview(cData.logo_url)
+        const logoValido = cData.logo_url &&
+          !cData.logo_url.includes('instagram.com') &&
+          !cData.logo_url.includes('facebook.com')
+        if (logoValido) setLogoPreview(cData.logo_url)
         if (cData.lat && cData.lng) setCoordenadas({ lat: cData.lat, lng: cData.lng })
       }
       if (ctData && ctData.length > 0) {
@@ -169,30 +191,30 @@ export default function EditarCliente() {
   }
 
   async function buscarLogo() {
-    const dominio = form.site ? extrairDominio(form.site) : ''
-    const instagram = form.instagram.replace('@', '').trim()
-    if (!dominio && !instagram) { setErro('Informe o site ou Instagram para buscar o logo.'); return }
+    const nomeEmpresa = form.nome_empresa || form.nome_fantasia
+    if (!nomeEmpresa && !form.site && !form.instagram) {
+      setErro('Preencha a Razão Social ou o site para buscar o logo.'); return
+    }
     setBuscandoLogo(true)
     setErro('')
-    if (dominio && !dominio.includes('instagram.com') && !dominio.includes('facebook.com')) {
-      const url = `https://logo.clearbit.com/${dominio}`
-      try {
-        const res = await fetch(url)
-        if (res.ok && res.headers.get('content-type')?.startsWith('image')) {
-          setLogoPreview(url); atualizar('logo_url', url); setBuscandoLogo(false); return
-        }
-      } catch { /* continua */ }
+
+    const candidatos: string[] = []
+    if (form.site) candidatos.push(extrairDominio(form.site))
+    if (nomeEmpresa) candidatos.push(...dominiosDaEmpresa(nomeEmpresa))
+    if (form.instagram) {
+      const ig = form.instagram.replace('@', '').trim()
+      candidatos.push(`${ig}.com.br`, `${ig}.com`)
     }
-    if (instagram) {
-      for (const sufixo of ['.com.br', '.com']) {
-        const url = `https://logo.clearbit.com/${instagram}${sufixo}`
-        try {
-          const res = await fetch(url)
-          if (res.ok && res.headers.get('content-type')?.startsWith('image')) {
-            setLogoPreview(url); atualizar('logo_url', url); setBuscandoLogo(false); return
-          }
-        } catch { /* continua */ }
+
+    for (const dominio of candidatos) {
+      const url = await tentarClearbit(dominio)
+      if (url) {
+        setLogoPreview(url); atualizar('logo_url', url); setBuscandoLogo(false); return
       }
+    }
+
+    if (form.logo_url.includes('instagram.com') || form.logo_url.includes('facebook.com')) {
+      atualizar('logo_url', ''); setLogoPreview(null)
     }
     setErro('⚠️ Logo não encontrado automaticamente. Envie do computador ou cole a URL abaixo.')
     setBuscandoLogo(false)
@@ -242,6 +264,7 @@ export default function EditarCliente() {
       const data = await res.json()
       if (data.length > 0) {
         setCoordenadas({ lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) })
+        setAviso('')
       } else {
         const q2 = [cidade, estado, 'Brasil'].join(', ')
         const res2 = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q2)}&limit=1&countrycodes=br`, {
@@ -250,13 +273,13 @@ export default function EditarCliente() {
         const data2 = await res2.json()
         if (data2.length > 0) {
           setCoordenadas({ lat: parseFloat(data2[0].lat), lng: parseFloat(data2[0].lon) })
-          setErro('⚠️ Endereço exato não encontrado. Localização aproximada pela cidade.')
+          setAviso('⚠️ Endereço exato não encontrado. Localização aproximada pela cidade.')
         } else {
-          setErro('❌ Localização não encontrada. Verifique o endereço e tente novamente.')
+          setAviso('⚠️ Localização não encontrada. Verifique o endereço.')
         }
       }
     } catch {
-      setErro('❌ Erro ao buscar localização. Verifique sua internet.')
+      setAviso('⚠️ Erro ao buscar localização. Verifique sua internet.')
     }
     setGeocodificando(false)
   }
@@ -270,25 +293,32 @@ export default function EditarCliente() {
     setSalvando(true)
     setErro('')
 
-    const { error: errUpdate } = await supabase.from('clientes').update({
-      ...form,
-      lat: coordenadas?.lat || null,
-      lng: coordenadas?.lng || null,
-    }).eq('id', id)
+    try {
+      const { error: errUpdate } = await supabase.from('clientes').update({
+        ...form,
+        data_fundacao: form.data_fundacao || null,
+        data_inauguracao: form.data_inauguracao || null,
+        lat: coordenadas?.lat || null,
+        lng: coordenadas?.lng || null,
+      }).eq('id', id)
 
-    if (errUpdate) { setSalvando(false); setErro('Erro ao salvar: ' + errUpdate.message); return }
+      if (errUpdate) { setSalvando(false); setErro('Erro ao salvar: ' + errUpdate.message); return }
 
-    await supabase.from('contatos_cliente').delete().eq('cliente_id', id)
+      await supabase.from('contatos_cliente').delete().eq('cliente_id', id)
 
-    const todosContatos = [...contatosGerais, ...contatosFinanceiro].filter(c => c.nome.trim())
-    if (todosContatos.length > 0) {
-      await supabase.from('contatos_cliente').insert(
-        todosContatos.map(({ id: _cid, ...c }) => ({ ...c, cliente_id: id }))
-      )
+      const todosContatos = [...contatosGerais, ...contatosFinanceiro].filter(c => c.nome.trim())
+      if (todosContatos.length > 0) {
+        await supabase.from('contatos_cliente').insert(
+          todosContatos.map(({ id: _cid, ...c }) => ({ ...c, cliente_id: id }))
+        )
+      }
+
+      setSalvando(false)
+      router.push(`/clientes/${id}`)
+    } catch (e: unknown) {
+      setSalvando(false)
+      setErro('Erro inesperado: ' + (e instanceof Error ? e.message : String(e)))
     }
-
-    setSalvando(false)
-    router.push(`/clientes/${id}`)
   }
 
   const renderContatos = (lista: Contato[], setLista: (v: Contato[]) => void, tipo: 'geral' | 'financeiro') => (
@@ -544,7 +574,16 @@ export default function EditarCliente() {
               className="w-full border-2 border-dashed border-blue-300 text-blue-600 font-semibold text-sm py-2.5 rounded-xl hover:bg-blue-50 transition disabled:opacity-50">
               {geocodificando ? '⏳ Buscando localização...' : '🗺️ Obter / Atualizar Geolocalização'}
             </button>
-            {coordenadas && (
+            {aviso && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-center">
+                <p className="text-xs text-yellow-700">{aviso}</p>
+                {coordenadas && (
+                  <a href={`https://maps.google.com/?q=${coordenadas.lat},${coordenadas.lng}`} target="_blank"
+                    className="text-xs text-blue-500 hover:underline mt-1 inline-block">Verificar localização no mapa →</a>
+                )}
+              </div>
+            )}
+            {coordenadas && !aviso && (
               <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
                 <p className="text-xs text-green-700 font-semibold">✅ Localização salva.</p>
                 <a href={`https://maps.google.com/?q=${coordenadas.lat},${coordenadas.lng}`} target="_blank"
