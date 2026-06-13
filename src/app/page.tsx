@@ -18,6 +18,9 @@ export default function Home() {
           <Link href="/clientes" className="block w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-xl transition">
             🏢 Clientes
           </Link>
+          <Link href="/contratos" className="block w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl transition">
+            📄 Contratos
+          </Link>
         </div>
 
         <p className="text-xs text-gray-400 mt-8">NERESCO Consultoria © 2026</p>

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { notificarWhatsApp } from '@/lib/notificar'
 
 type Cliente = {
   id: string
@@ -108,6 +109,11 @@ export default function NovoServico() {
     num_promotoras: 1,
     valor_cliente: '',
     valor_diaria: '',
+    // Forma de pagamento
+    tem_sinal: false,
+    sinal_pct: '50',
+    prazo_pagamento_dias: '30',
+    data_emissao_nf: '',
     status: 'proposta',
     observacoes: '',
   })
@@ -248,6 +254,10 @@ export default function NovoServico() {
         num_promotoras: Number(form.num_promotoras) || 1,
         valor_cliente: form.valor_cliente ? Number(form.valor_cliente) : null,
         valor_diaria: form.valor_diaria ? Number(form.valor_diaria) : null,
+        tem_sinal: form.tem_sinal,
+        sinal_pct: form.tem_sinal && form.sinal_pct ? Number(form.sinal_pct) : 0,
+        prazo_pagamento_dias: form.prazo_pagamento_dias ? Number(form.prazo_pagamento_dias) : 30,
+        data_emissao_nf: form.data_emissao_nf || null,
         status: form.status,
         observacoes: form.observacoes.trim() || null,
         contatos_aviso: contatosAviso.length > 0
@@ -270,6 +280,18 @@ export default function NovoServico() {
         }))
         const { error: erroEscala } = await supabase.from('escala').insert(escalaPayload)
         if (erroEscala) console.error('Erro ao salvar escala:', erroEscala)
+
+        // Fluxo escalação: avisa cada promotora escalada na criação do serviço.
+        // Buscamos nome+whatsapp pelos ids (o estado local da escala não traz esses campos).
+        if (!erroEscala) {
+          const ids = escala.map(e => e.promotora_id)
+          const { data: proms } = await supabase.from('promotoras').select('nome, whatsapp').in('id', ids)
+          notificarWhatsApp(
+            'escalacao',
+            { nome: payload.nome, data_inicio: payload.data_inicio, horario_inicio: payload.horario_inicio, cidade: payload.cidade, bairro: payload.bairro },
+            (proms || []).map(p => ({ numero: p.whatsapp, nome: p.nome })),
+          )
+        }
       }
 
       router.push(`/servicos/${novo.id}`)
@@ -776,6 +798,51 @@ export default function NovoServico() {
                   onChange={e => set('valor_diaria', e.target.value)}
                   placeholder='0,00'
                   className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+              </div>
+
+              {/* FORMA DE PAGAMENTO */}
+              <div className="border-t border-gray-100 pt-4 space-y-3">
+                <h3 className="text-sm font-bold text-gray-700">💳 Forma de Pagamento</h3>
+
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={form.tem_sinal}
+                    onChange={e => set('tem_sinal', e.target.checked)}
+                    className="w-4 h-4" />
+                  <span>Cliente paga <strong>sinal</strong> (entrada antecipada na assinatura do contrato)</span>
+                </label>
+
+                {form.tem_sinal && (
+                  <div className="ml-6">
+                    <label className="text-xs font-semibold text-gray-500 uppercase">% do Sinal</label>
+                    <input type="number" min="0" max="100" step="1" value={form.sinal_pct}
+                      onChange={e => set('sinal_pct', e.target.value)}
+                      className="w-32 mt-1 border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-violet-400" />
+                    <span className="ml-2 text-xs text-gray-500">(o saldo restante segue o prazo abaixo)</span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Prazo do Cliente (dias após emissão da NF)</label>
+                  <input type="number" min="0" step="1" value={form.prazo_pagamento_dias}
+                    onChange={e => set('prazo_pagamento_dias', e.target.value)}
+                    placeholder='30'
+                    className="w-32 mt-1 border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-violet-400" />
+                  <span className="ml-2 text-xs text-gray-500">padrão: 30 dias</span>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase">Data Prevista da Emissão da NF</label>
+                  <input type="date" value={form.data_emissao_nf}
+                    onChange={e => set('data_emissao_nf', e.target.value)}
+                    className="w-44 mt-1 border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-violet-400" />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Se deixar em branco, o sistema usa o dia útil seguinte ao fim do serviço.
+                  </p>
+                </div>
+
+                <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 text-xs text-violet-700">
+                  💡 A <strong>promotora</strong> recebe automaticamente <strong>5 dias após o vencimento do cliente</strong> (ajustado para o próximo dia útil). Se o cliente atrasar, a JFS paga a promotora do próprio caixa na data prevista — protegendo a operação.
+                </div>
               </div>
 
               {form.valor_cliente && form.valor_diaria && (

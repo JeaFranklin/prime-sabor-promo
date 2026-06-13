@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { notificarWhatsApp } from '@/lib/notificar'
+import { BlocoContratos } from './BlocoContratos'
 
 type Servico = {
   id: string
@@ -121,7 +123,7 @@ export default function ServicoDetalhe() {
     const [{ data: srv }, { data: esc }, { data: proms }] = await Promise.all([
       supabase.from('servicos').select('*, clientes(id, nome_empresa)').eq('id', id).single(),
       supabase.from('escala').select('*, promotoras(id, nome, whatsapp, cidade, foto_url)').eq('servico_id', id).order('created_at'),
-      supabase.from('promotoras').select('id, nome, cidade, avaliacao_media').eq('status', 'ativa').order('nome'),
+      supabase.from('promotoras').select('id, nome, cidade, avaliacao_media').eq('status', 'ativo').order('nome'),
     ])
     if (srv) {
       setServico(srv as Servico)
@@ -139,6 +141,24 @@ export default function ServicoDetalhe() {
     setCarregando(false)
   }
 
+  // Dados do serviço no formato que a notificação espera.
+  function payloadServico() {
+    return {
+      nome: servico?.nome || 'serviço',
+      data_inicio: servico?.data_inicio,
+      horario_inicio: servico?.horario_inicio,
+      cidade: servico?.cidade,
+      bairro: servico?.bairro,
+    }
+  }
+
+  // Destinatários = promotoras da escala (com número), opcionalmente só as confirmadas.
+  function destinatariosEscala(somenteConfirmadas = false) {
+    return escala
+      .filter(e => e.promotoras?.whatsapp && (!somenteConfirmadas || e.status_confirmacao === 'confirmada'))
+      .map(e => ({ numero: e.promotoras!.whatsapp, nome: e.promotoras!.nome, valor: e.valor_diaria }))
+  }
+
   async function avancarStatus() {
     if (!servico) return
     const idx = STATUS_ORDEM.indexOf(servico.status)
@@ -148,6 +168,13 @@ export default function ServicoDetalhe() {
     await supabase.from('servicos').update({ status: novoStatus }).eq('id', id)
     setServico(s => s ? { ...s, status: novoStatus } : s)
     setSalvandoStatus(false)
+
+    // Fluxos por mudança de status: check-in (em andamento) e relatório (concluído).
+    if (novoStatus === 'em_andamento') {
+      notificarWhatsApp('checkin', payloadServico(), destinatariosEscala())
+    } else if (novoStatus === 'concluido') {
+      notificarWhatsApp('relatorio', payloadServico(), destinatariosEscala())
+    }
   }
 
   async function salvarBriefing() {
@@ -162,6 +189,9 @@ export default function ServicoDetalhe() {
     }).eq('id', id)
     setSalvandoBriefing(false)
     alert('Briefing salvo! ✅')
+
+    // Fluxo: avisa as promotoras da escala que o briefing está disponível.
+    notificarWhatsApp('briefing', payloadServico(), destinatariosEscala())
   }
 
   async function adicionarNaEscala(promotora_id: string) {
@@ -178,6 +208,16 @@ export default function ServicoDetalhe() {
     if (!error) await buscarDados()
     setAdicionandoEscala(false)
     setPromotoraFiltro('')
+
+    // Fluxo: avisa a promotora recém-escalada. Buscamos o whatsapp dela
+    // (a lista de seleção não traz esse campo).
+    if (!error) {
+      const { data: prom } = await supabase
+        .from('promotoras').select('nome, whatsapp').eq('id', promotora_id).single()
+      if (prom?.whatsapp) {
+        notificarWhatsApp('escalacao', payloadServico(), [{ numero: prom.whatsapp, nome: prom.nome }])
+      }
+    }
   }
 
   async function removerDaEscala(escalaId: string) {
@@ -188,11 +228,27 @@ export default function ServicoDetalhe() {
   async function atualizarConfirmacao(escalaId: string, status: string) {
     await supabase.from('escala').update({ status_confirmacao: status }).eq('id', escalaId)
     setEscala(prev => prev.map(e => e.id === escalaId ? { ...e, status_confirmacao: status } : e))
+
+    // Fluxo: ao confirmar a presença, manda um agradecimento pra promotora.
+    if (status === 'confirmada') {
+      const item = escala.find(e => e.id === escalaId)
+      if (item?.promotoras?.whatsapp) {
+        notificarWhatsApp('confirmacao', payloadServico(), [{ numero: item.promotoras.whatsapp, nome: item.promotoras.nome }])
+      }
+    }
   }
 
   async function atualizarPagamento(escalaId: string, status: string) {
     await supabase.from('escala').update({ status_pagamento: status }).eq('id', escalaId)
     setEscala(prev => prev.map(e => e.id === escalaId ? { ...e, status_pagamento: status } : e))
+
+    // Fluxo: ao marcar como pago, avisa a promotora (com o valor da diária).
+    if (status === 'pago') {
+      const item = escala.find(e => e.id === escalaId)
+      if (item?.promotoras?.whatsapp) {
+        notificarWhatsApp('pagamento', payloadServico(), [{ numero: item.promotoras.whatsapp, nome: item.promotoras.nome, valor: item.valor_diaria }])
+      }
+    }
   }
 
   async function toggleLider(escalaId: string, atual: boolean) {
@@ -291,6 +347,8 @@ export default function ServicoDetalhe() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+
+        <BlocoContratos servicoId={servico.id} dataInicio={servico.data_inicio} dataFim={servico.data_fim} />
 
         {/* ABA DADOS */}
         {aba === 'dados' && (

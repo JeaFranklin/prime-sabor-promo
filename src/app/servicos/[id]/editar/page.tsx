@@ -55,6 +55,10 @@ export default function EditarServico() {
     num_promotoras: 1,
     valor_cliente: '',
     valor_diaria: '',
+    tem_sinal: false,
+    sinal_pct: '50',
+    prazo_pagamento_dias: '30',
+    data_emissao_nf: '',
     status: 'proposta',
     observacoes: '',
   })
@@ -86,6 +90,10 @@ export default function EditarServico() {
           num_promotoras: s.num_promotoras || 1,
           valor_cliente: s.valor_cliente != null ? String(s.valor_cliente) : '',
           valor_diaria: s.valor_diaria != null ? String(s.valor_diaria) : '',
+          tem_sinal: s.tem_sinal ?? false,
+          sinal_pct: s.sinal_pct != null ? String(s.sinal_pct) : '50',
+          prazo_pagamento_dias: s.prazo_pagamento_dias != null ? String(s.prazo_pagamento_dias) : '30',
+          data_emissao_nf: s.data_emissao_nf || '',
           status: s.status || 'proposta',
           observacoes: s.observacoes || '',
         })
@@ -94,7 +102,7 @@ export default function EditarServico() {
     })
   }, [id])
 
-  function set(field: string, value: string | number) {
+  function set(field: string, value: string | number | boolean) {
     setForm(f => ({ ...f, [field]: value }))
   }
 
@@ -135,6 +143,10 @@ export default function EditarServico() {
         num_promotoras: Number(form.num_promotoras) || 1,
         valor_cliente: form.valor_cliente ? Number(form.valor_cliente) : null,
         valor_diaria: form.valor_diaria ? Number(form.valor_diaria) : null,
+        tem_sinal: form.tem_sinal,
+        sinal_pct: form.tem_sinal && form.sinal_pct ? Number(form.sinal_pct) : 0,
+        prazo_pagamento_dias: form.prazo_pagamento_dias ? Number(form.prazo_pagamento_dias) : 30,
+        data_emissao_nf: form.data_emissao_nf || null,
         status: form.status,
         observacoes: form.observacoes.trim() || null,
       }
@@ -315,6 +327,47 @@ export default function EditarServico() {
             <input type="number" min={1} value={form.num_promotoras}
               onChange={e => set('num_promotoras', parseInt(e.target.value) || 1)}
               className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-violet-400" />
+          </div>
+
+          {/* FORMA DE PAGAMENTO */}
+          <div className="border-t border-gray-100 pt-4 space-y-3">
+            <h3 className="text-sm font-bold text-gray-700">💳 Forma de Pagamento</h3>
+
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={form.tem_sinal}
+                onChange={e => set('tem_sinal', e.target.checked)}
+                className="w-4 h-4" />
+              <span>Cliente paga <strong>sinal</strong> na assinatura do contrato</span>
+            </label>
+
+            {form.tem_sinal && (
+              <div className="ml-6">
+                <label className="text-xs font-semibold text-gray-500 uppercase">% do Sinal</label>
+                <input type="number" min="0" max="100" step="1" value={form.sinal_pct}
+                  onChange={e => set('sinal_pct', e.target.value)}
+                  className="w-32 mt-1 border border-gray-200 rounded-xl px-4 py-2 text-sm" />
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Prazo Cliente (dias após NF)</label>
+                <input type="number" min="0" step="1" value={form.prazo_pagamento_dias}
+                  onChange={e => set('prazo_pagamento_dias', e.target.value)}
+                  placeholder="30"
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase">Data Prevista Emissão NF</label>
+                <input type="date" value={form.data_emissao_nf}
+                  onChange={e => set('data_emissao_nf', e.target.value)}
+                  className="w-full mt-1 border border-gray-200 rounded-xl px-4 py-2 text-sm" />
+              </div>
+            </div>
+
+            <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 text-xs text-violet-700">
+              💡 A promotora recebe automaticamente <strong>5 dias após o vencimento do cliente</strong> (ajustado para o próximo dia útil).
+            </div>
           </div>
 
           <div>
