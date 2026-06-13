@@ -83,11 +83,21 @@ export async function POST(req: NextRequest) {
   }
 
   // Loga pra debug — útil quando configurar o webhook
-  console.log(`[webhook] evento=${body.event} instance=${body.instance}`)
+  console.log(`[webhook] PAYLOAD COMPLETO:`, JSON.stringify(body))
+  console.log(`[webhook] evento=${body.event} instance=${body.instance} fromMe=${body.data?.key?.fromMe}`)
+
+  // Normaliza o nome do evento — Evolution pode mandar 'messages.upsert',
+  // 'MESSAGES_UPSERT', 'messages-upsert' dependendo da versão/config.
+  const eventoNormalizado = (body.event || '').toLowerCase().replace(/[._-]/g, '')
+  if (eventoNormalizado !== 'messagesupsert') {
+    console.log(`[webhook] ignorado — evento ${body.event} não é messages.upsert`)
+    return NextResponse.json({ ok: true, ignored: 'evento não relevante' })
+  }
 
   // Só processamos mensagens RECEBIDAS (não as enviadas pela própria instância)
-  if (body.event !== 'messages.upsert' || body.data?.key?.fromMe !== false) {
-    return NextResponse.json({ ok: true, ignored: 'evento não relevante' })
+  if (body.data?.key?.fromMe !== false) {
+    console.log(`[webhook] ignorado — mensagem enviada pela própria instância (fromMe=${body.data?.key?.fromMe})`)
+    return NextResponse.json({ ok: true, ignored: 'mensagem enviada pela instância' })
   }
 
   const numero = extrairNumero(body.data?.key?.remoteJid)
