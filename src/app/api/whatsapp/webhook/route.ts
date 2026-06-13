@@ -36,6 +36,7 @@ type WebhookData = {
   instance?: string
   data?: {
     key?: { remoteJid?: string; fromMe?: boolean; id?: string }
+    pushName?: string | null
     message?: {
       conversation?: string
       extendedTextMessage?: { text?: string }
@@ -94,48 +95,78 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, ignored: 'evento não relevante' })
   }
 
-  // Só processamos mensagens RECEBIDAS (não as enviadas pela própria instância)
-  if (body.data?.key?.fromMe !== false) {
-    console.log(`[webhook] ignorado — mensagem enviada pela própria instância (fromMe=${body.data?.key?.fromMe})`)
-    return NextResponse.json({ ok: true, ignored: 'mensagem enviada pela instância' })
+  // 🚨 Critério ANTIGO (não confiável): body.data.key.fromMe
+  // Em testes onde o número da promotora é igual ao da instância (admin testando),
+  // a Evolution marca TUDO com fromMe=true. Trocamos pra usar `pushName`:
+  //   - mensagem RECEBIDA → pushName preenchido (nome do remetente)
+  //   - mensagem ENVIADA pelo sistema → pushName null/vazio
+  const pushName = (body.data?.pushName || '').trim()
+  if (!pushName) {
+    console.log(`[webhook] ignorado — sem pushName (provavelmente mensagem do próprio sistema)`)
+    return NextResponse.json({ ok: true, ignored: 'sem pushName — mensagem do sistema' })
   }
 
-  const numero = extrairNumero(body.data?.key?.remoteJid)
+  const numeroBruto = extrairNumero(body.data?.key?.remoteJid)
   const texto = extrairTexto(body.data)
-  if (!numero || !texto) {
-    return NextResponse.json({ ok: true, ignored: 'sem número ou texto' })
+  if (!texto) {
+    return NextResponse.json({ ok: true, ignored: 'sem texto' })
   }
 
-  console.log(`[webhook] mensagem recebida de ${numero}: "${texto}"`)
+  console.log(`[webhook] mensagem recebida de "${pushName}" (jid=${body.data?.key?.remoteJid}): "${texto}"`)
 
   const aceitar = ehAceite(texto)
   const recusar = ehRecusa(texto)
   if (!aceitar && !recusar) {
-    console.log(`[webhook] resposta não reconhecida — ignorada`)
+    console.log(`[webhook] resposta não reconhecida ("${texto}") — ignorada`)
     return NextResponse.json({ ok: true, ignored: 'resposta não SIM/NAO' })
   }
 
-  // Acha a proposta MAIS RECENTE em status 'enviada' pra esse número
-  const supa = adminClient()
-  const { data: propostas, error } = await supa
-    .from('propostas')
-    .select(`id, status, servico_nome, promotora_id, expira_em, servico_id,
-             promotoras:promotora_id(nome, whatsapp)`)
-    .eq('enviada_whatsapp_numero', numero)
-    .eq('status', 'enviada')
-    .order('created_at', { ascending: false })
-    .limit(1)
-
-  if (error) {
-    console.error('[webhook] erro buscando proposta:', error.message)
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+  // 🔍 Busca proposta com flexibilidade — Evolution pode mandar:
+  //   - remoteJid em formato @s.whatsapp.net (com número) → match por número
+  //   - remoteJid em formato @lid (sem número usável) → match por pushName
+  type PropostaMatch = {
+    id: string; status: string; servico_nome: string;
+    promotora_id: string; expira_em: string; servico_id: string;
+    promotoras: { nome: string; whatsapp: string | null } | null
   }
+  const supa = adminClient()
+  let propostas: PropostaMatch[] | null = null
+
+  if (numeroBruto) {
+    const { data } = await supa
+      .from('propostas')
+      .select(`id, status, servico_nome, promotora_id, expira_em, servico_id,
+               promotoras:promotora_id(nome, whatsapp)`)
+      .eq('enviada_whatsapp_numero', numeroBruto)
+      .eq('status', 'enviada')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    propostas = data as unknown as PropostaMatch[] | null
+  }
+
+  // Fallback: busca por nome da promotora (pushName)
   if (!propostas || propostas.length === 0) {
-    console.log(`[webhook] nenhuma proposta ativa pro número ${numero} — ignorando`)
+    console.log(`[webhook] sem match por número (${numeroBruto}). Tentando por pushName="${pushName}"...`)
+    const { data } = await supa
+      .from('propostas')
+      .select(`id, status, servico_nome, promotora_id, expira_em, servico_id,
+               promotoras:promotora_id!inner(nome, whatsapp)`)
+      .eq('status', 'enviada')
+      .ilike('promotoras.nome', `%${pushName}%`)
+      .order('created_at', { ascending: false })
+      .limit(1)
+    propostas = data as unknown as PropostaMatch[] | null
+  }
+
+  if (!propostas || propostas.length === 0) {
+    console.log(`[webhook] nenhuma proposta ativa achada — ignorando`)
     return NextResponse.json({ ok: true, ignored: 'sem proposta ativa' })
   }
 
   const prop = propostas[0]
+  // Se Evolution mandou @lid (sem número), usa o whatsapp cadastrado da promotora
+  const numero = numeroBruto || prop.promotoras?.whatsapp || ''
+  console.log(`[webhook] proposta encontrada: ${prop.id} (promotora=${prop.promotoras?.nome})`)
   if (prop.expira_em && new Date(prop.expira_em) < new Date()) {
     // Marca como expirada e avisa
     await supa.from('propostas').update({ status: 'expirada' }).eq('id', prop.id)
