@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { reassinarUrl } from '@/lib/contratos/gerar-pdf'
+import { criarNotificacao } from '@/lib/notificacoes/criar'
 
 function adminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
 
   const supa = adminClient()
   const { data: contrato, error } = await supa
-    .from('contratos').select('id, status, expira_em').eq('token_aceite', token).maybeSingle()
+    .from('contratos').select('id, numero, tipo, status, expira_em').eq('token_aceite', token).maybeSingle()
   if (error || !contrato) return NextResponse.json({ error: 'Contrato não encontrado' }, { status: 404 })
   if (contrato.status === 'aceito' || contrato.status === 'recusado') {
     return NextResponse.json({ error: `Contrato já foi ${contrato.status}` }, { status: 409 })
@@ -77,5 +78,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
   }
 
   console.log(`[api/contratos/aceite] contrato ${contrato.id} → ${update.status} (IP ${ip})`)
+
+  // Cria notificação in-app pro admin
+  const eAceito = update.status === 'aceito'
+  await criarNotificacao({
+    tipo: eAceito ? 'contrato_aceito' : 'contrato_recusado',
+    titulo: `Contrato ${contrato.numero} ${eAceito ? 'aceito' : 'recusado'}`,
+    mensagem: `Tipo: ${contrato.tipo === 'cliente' ? 'cliente' : 'promotora'}${eAceito && body.nome_digitado ? ` · Assinou: ${body.nome_digitado}` : ''}`,
+    link_para: `/contratos/${contrato.id}`,
+    metadata: { contrato_id: contrato.id, ip },
+  })
+
   return NextResponse.json({ ok: true, status: update.status })
 }

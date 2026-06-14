@@ -24,6 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { enviarWhatsApp } from '@/lib/whatsapp'
+import { criarNotificacao } from '@/lib/notificacoes/criar'
 
 function adminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -189,6 +190,15 @@ export async function POST(req: NextRequest) {
   }
 
   console.log(`[webhook] proposta ${prop.id} → ${update.status}`)
+
+  // Cria notificação in-app pro admin (sino do header)
+  await criarNotificacao({
+    tipo: aceitar ? 'proposta_aceita' : 'proposta_recusada',
+    titulo: `${prop.promotoras?.nome ?? 'Promotora'} ${aceitar ? 'aceitou' : 'recusou'} a proposta`,
+    mensagem: `Serviço: ${prop.servico_nome}`,
+    link_para: `/servicos/${prop.servico_id}`,
+    metadata: { proposta_id: prop.id, servico_id: prop.servico_id, promotora_id: prop.promotora_id },
+  })
 
   // Resposta automática para a promotora
   const prom = prop.promotoras as unknown as { nome: string } | null
