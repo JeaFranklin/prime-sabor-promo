@@ -25,6 +25,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { enviarWhatsApp } from '@/lib/whatsapp'
 import { criarNotificacao } from '@/lib/notificacoes/criar'
+import { handleVianaBot, isVianaBotMessage } from '@/lib/viana'
 
 function adminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -115,6 +116,14 @@ export async function POST(req: NextRequest) {
 
   console.log(`[webhook] mensagem recebida de "${pushName}" (jid=${body.data?.key?.remoteJid}): "${texto}"`)
 
+  // 🟦 ROTEAMENTO PRA BOT VIANA (cliente Viana Supermercado, isolado em src/lib/viana/)
+  // Aditivo: se NÃO for mensagem do Bot Viana, o fluxo original do Prime Sabor segue intacto abaixo.
+  if (isVianaBotMessage(numeroBruto, texto)) {
+    console.log(`[viana] de "${pushName}" (...${numeroBruto?.slice(-4)}): "${texto.slice(0, 60)}"`)
+    return await handleVianaBot({ numero: numeroBruto!, nome: pushName, texto })
+  }
+
+  // 🟪 Fluxo Prime Sabor (SIM/NÃO de propostas) — intocado
   const aceitar = ehAceite(texto)
   const recusar = ehRecusa(texto)
   if (!aceitar && !recusar) {
