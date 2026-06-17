@@ -108,55 +108,55 @@ export function handlerPendentes(linhas: LinhaAgenda[]): string {
 }
 
 export function handlerSemana(linhas: LinhaAgenda[]): string {
-  // Início da semana = segunda
+  // Mostra só os dias já passados da semana (seg até hoje) — formato tabela
   const hoje = new Date()
   const diaJS = hoje.getDay()
-  const diaNosso = diaJS === 0 ? 6 : diaJS - 1
-  const inicio = new Date(hoje)
-  inicio.setDate(hoje.getDate() - diaNosso)
-  const fim = new Date(inicio)
-  fim.setDate(inicio.getDate() + 6)
-  const inicioStr = inicio.toISOString().slice(0, 10)
-  const fimStr = fim.toISOString().slice(0, 10)
+  const diaNosso = diaJS === 0 ? 6 : diaJS - 1  // 0=seg..6=dom
 
-  const semana = linhas.filter((l) => {
-    if (!l.data) return false
-    const dStr = new Date(l.data).toISOString().slice(0, 10)
-    return dStr >= inicioStr && dStr <= fimStr
-  })
+  const inicioSemana = new Date(hoje)
+  inicioSemana.setDate(hoje.getDate() - diaNosso)
 
-  let txt = `📊 *RESUMO SEMANA ${inicio.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} - ${fim.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}*\n\n`
-  txt += `Total: *${semana.length}* fornecedor${semana.length === 1 ? '' : 'es'}\n\n`
+  const NOMES = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB', 'DOM']
 
-  const porDia = new Map<string, number>()
-  for (const l of semana) {
-    const d = new Date(l.data!)
-    const key = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })
-    porDia.set(key, (porDia.get(key) || 0) + 1)
-  }
-  if (porDia.size > 0) {
-    txt += '*Por dia:*\n'
-    for (const [d, c] of porDia) txt += `  ${d}: ${c}\n`
-  }
+  type Row = { label: string; total: number; cot: number; dig: number; pend: number }
+  const rows: Row[] = []
+  let totTotal = 0, totCot = 0, totDig = 0, totPend = 0
 
-  const porStatus = new Map<string, number>()
-  let pend = 0
-  for (const l of semana) {
-    const s = (l.status || '').trim()
-    const c = (l.comprador || '').trim()
-    if (!s && !c) {
-      pend++
-      continue
+  for (let i = 0; i <= diaNosso; i++) {
+    const d = new Date(inicioSemana)
+    d.setDate(inicioSemana.getDate() + i)
+    const dStr = d.toISOString().slice(0, 10)
+    const dataFmt = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+
+    const dodia = linhas.filter((l) => l.data && new Date(l.data).toISOString().slice(0, 10) === dStr)
+    let cot = 0, dig = 0, pend = 0
+    for (const l of dodia) {
+      const st = (l.status || '').trim().toUpperCase()
+      const comp = (l.comprador || '').trim()
+      if (!st && !comp) pend++
+      else if (st.includes('COTAÇÃO') || st.includes('COTACAO')) cot++
+      else dig++
     }
-    const key = s || '(sem status)'
-    porStatus.set(key, (porStatus.get(key) || 0) + 1)
-  }
-  if (porStatus.size > 0 || pend > 0) {
-    txt += '\n*Por status:*\n'
-    for (const [s, c] of porStatus) txt += `  ${s}: ${c}\n`
-    if (pend > 0) txt += `  🚨 *FALTA DIGITAR*: ${pend}\n`
+    rows.push({ label: `${NOMES[i]} ${dataFmt}`, total: dodia.length, cot, dig, pend })
+    totTotal += dodia.length; totCot += cot; totDig += dig; totPend += pend
   }
 
+  if (rows.length === 0) {
+    return '📊 *SEMANA ATÉ HOJE*\n\nNenhum dado disponível.\n\n— Viana'
+  }
+
+  const sep = '─────────────────────────────'
+  let txt = '📊 *SEMANA ATÉ HOJE*\n\n'
+  txt += '```\n'
+  txt += 'Dia        |Tot| CO| DI| PE\n'
+  txt += sep + '\n'
+  for (const r of rows) {
+    txt += `${r.label.padEnd(10)} |${String(r.total).padStart(3)}|${String(r.cot).padStart(3)}|${String(r.dig).padStart(3)}|${String(r.pend).padStart(3)}\n`
+  }
+  txt += sep + '\n'
+  txt += `${'TOTAL'.padEnd(10)} |${String(totTotal).padStart(3)}|${String(totCot).padStart(3)}|${String(totDig).padStart(3)}|${String(totPend).padStart(3)}\n`
+  txt += '```\n'
+  txt += 'CO=Cotação  DI=Digitado  PE=Pendente\n'
   txt += '\n— Viana'
   return txt
 }
