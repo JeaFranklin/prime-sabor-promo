@@ -16,7 +16,8 @@ export function papelDoNumero(numero: string): PapelUsuario {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-  return admins.includes(numero) ? 'admin' : 'readonly'
+  const variantes = [numero, numero.startsWith('55') ? numero.slice(2) : `55${numero}`]
+  return variantes.some((n) => admins.includes(n)) ? 'admin' : 'readonly'
 }
 
 export function isAdmin(numero: string): boolean {
