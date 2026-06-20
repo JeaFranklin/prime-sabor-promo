@@ -26,6 +26,15 @@ import {
   handlerAjuda,
   handlerDesconhecido,
 } from './handlers'
+import { isAdmin, MENSAGEM_SEM_PERMISSAO } from './permissoes'
+import { processarConfirmacao } from './confirmacao'
+import {
+  handlerSetStatus,
+  handlerSetPrazo,
+  handlerSetFluxo,
+  handlerSetComprador,
+  handlerSetPedido,
+} from './escrita'
 import type { BotContext } from './tipos'
 
 function adminClient() {
@@ -67,26 +76,65 @@ export function isVianaBotMessage(numero: string | null, texto: string): boolean
 export async function handleVianaBot(ctx: BotContext): Promise<NextResponse> {
   const inicio = Date.now()
   const { numero, nome, texto } = ctx
-  const params = detectarIntencao(texto)
   let resposta = ''
   let erro: string | undefined
+  let intentLog = 'desconhecido'
 
   try {
-    const agenda = await carregarAgenda()
-    if (!agenda) {
-      resposta = '⚠️ Erro ao carregar a agenda. Tenta de novo em 1 minuto.\n\n— Viana'
+    // 1. Verifica se usuário está aguardando confirmação (SIM/NÃO)
+    //    Deve ser checado ANTES do parser — qualquer mensagem pode ser a resposta
+    const conf = await processarConfirmacao(numero, texto)
+    if (conf.tratado) {
+      intentLog = 'confirmacao'
+      resposta = conf.resposta
     } else {
-      const linhas = agenda.linhas
-      switch (params.intent) {
-        case 'hoje':       resposta = handlerHoje(linhas); break
-        case 'amanha':     resposta = handlerAmanha(linhas); break
-        case 'data':       resposta = handlerData(linhas, params.data); break
-        case 'dia_semana': resposta = handlerDiaSemana(linhas, params.dia); break
-        case 'pendentes':  resposta = handlerPendentes(linhas); break
-        case 'semana':     resposta = handlerSemana(linhas); break
-        case 'fornecedor': resposta = handlerFornecedor(linhas, params.query); break
-        case 'ajuda':      resposta = handlerAjuda(); break
-        default:           resposta = handlerDesconhecido(); break
+      // 2. Fluxo normal: detecta intent e carrega agenda
+      const params = detectarIntencao(texto)
+      intentLog = params.intent
+
+      const agenda = await carregarAgenda()
+      if (!agenda) {
+        resposta = '⚠️ Erro ao carregar a agenda. Tenta de novo em 1 minuto.\n\n— Viana'
+      } else {
+        const linhas = agenda.linhas
+        switch (params.intent) {
+          case 'hoje':       resposta = handlerHoje(linhas); break
+          case 'amanha':     resposta = handlerAmanha(linhas); break
+          case 'data':       resposta = handlerData(linhas, params.data); break
+          case 'dia_semana': resposta = handlerDiaSemana(linhas, params.dia); break
+          case 'pendentes':  resposta = handlerPendentes(linhas); break
+          case 'semana':     resposta = handlerSemana(linhas); break
+          case 'fornecedor': resposta = handlerFornecedor(linhas, params.query); break
+          case 'ajuda':      resposta = handlerAjuda(); break
+          // Comandos de escrita — somente admins
+          case 'set_status':
+            resposta = isAdmin(numero)
+              ? await handlerSetStatus(linhas, numero, nome, params.codigo, params.valor)
+              : MENSAGEM_SEM_PERMISSAO
+            break
+          case 'set_prazo':
+            resposta = isAdmin(numero)
+              ? await handlerSetPrazo(linhas, numero, nome, params.codigo, params.valor)
+              : MENSAGEM_SEM_PERMISSAO
+            break
+          case 'set_fluxo':
+            resposta = isAdmin(numero)
+              ? await handlerSetFluxo(linhas, numero, nome, params.codigo, params.valor)
+              : MENSAGEM_SEM_PERMISSAO
+            break
+          case 'set_comprador':
+            resposta = isAdmin(numero)
+              ? await handlerSetComprador(linhas, numero, nome, params.codigo, params.valor)
+              : MENSAGEM_SEM_PERMISSAO
+            break
+          case 'set_pedido':
+            resposta = isAdmin(numero)
+              ? await handlerSetPedido(linhas, numero, nome, params.codigo, params.valor)
+              : MENSAGEM_SEM_PERMISSAO
+            break
+          default:
+            resposta = handlerDesconhecido()
+        }
       }
     }
   } catch (e) {
@@ -108,7 +156,7 @@ export async function handleVianaBot(ctx: BotContext): Promise<NextResponse> {
       numero_whatsapp: numero,
       nome_remetente: nome,
       pergunta: texto.slice(0, 500),
-      intent: params.intent,
+      intent: intentLog,
       resposta_resumo: resposta.slice(0, 300),
       duracao_ms: duracao,
       erro: erro || null,
@@ -117,5 +165,5 @@ export async function handleVianaBot(ctx: BotContext): Promise<NextResponse> {
       if (error) console.error('[viana] falha log interação:', error.message)
     })
 
-  return NextResponse.json({ ok: true, intent: params.intent, viana: true })
+  return NextResponse.json({ ok: true, intent: intentLog, viana: true })
 }

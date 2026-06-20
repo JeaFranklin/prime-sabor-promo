@@ -209,15 +209,22 @@ export function handlerAjuda(): string {
   return (
     '🤖 *VIANA — Comandos disponíveis*\n\n' +
     'Sempre comece com a palavra *Bot*:\n\n' +
-    '📅 *Bot hoje* — agenda de hoje\n' +
-    '📅 *Bot amanhã* — agenda de amanhã\n' +
-    '📅 *Bot quinta* (ou outro dia) — próxima ocorrência\n' +
-    '📅 *Bot 20/06* — data específica\n' +
-    '🚨 *Bot pendentes* — quem está faltando digitar\n' +
-    '📊 *Bot semana* — resumo da semana\n' +
-    '🔍 *Bot coca* — busca fornecedor pelo nome\n' +
-    '🔍 *Bot 1234* — busca por código\n' +
-    '❓ *Bot ajuda* — esta lista\n\n' +
+    '*📅 Consultas (todos):*\n' +
+    '• *Bot hoje* — agenda de hoje\n' +
+    '• *Bot amanhã* — agenda de amanhã\n' +
+    '• *Bot quinta* (ou outro dia) — próxima ocorrência\n' +
+    '• *Bot 20/06* — data específica\n' +
+    '• *Bot pendentes* — faltando digitar (7 dias)\n' +
+    '• *Bot semana* — resumo da semana\n' +
+    '• *Bot coca* — busca fornecedor pelo nome\n' +
+    '• *Bot 1234* — busca por código\n\n' +
+    '*✏️ Edição (somente Jeã e Kênia):*\n' +
+    '• *Bot status 461 PEDIDO DIGITADO*\n' +
+    '• *Bot prazo 461 25/06*\n' +
+    '• *Bot fluxo 461 NORMAL*\n' +
+    '• *Bot comprador 461 João*\n' +
+    '• *Bot pedido 461 98765*\n\n' +
+    '_Toda alteração pede confirmação antes de salvar._\n\n' +
     '— Viana'
   )
 }

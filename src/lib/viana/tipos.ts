@@ -33,6 +33,12 @@ export type IntentParams =
   | { intent: 'fornecedor'; query: string }
   | { intent: 'ajuda' }
   | { intent: 'desconhecido' }
+  // Comandos de escrita (somente admins)
+  | { intent: 'set_status';    codigo: string; valor: string }
+  | { intent: 'set_prazo';     codigo: string; valor: string }
+  | { intent: 'set_fluxo';     codigo: string; valor: string }
+  | { intent: 'set_comprador'; codigo: string; valor: string }
+  | { intent: 'set_pedido';    codigo: string; valor: string }
 
 export type BotContext = {
   numero: string

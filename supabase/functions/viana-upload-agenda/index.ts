@@ -1,18 +1,13 @@
 /**
  * viana-upload-agenda — Edge Function | Bot Viana
- * Baixa Excel do OneDrive via Microsoft Graph API, converte pra JSON e salva no Storage
+ * Recebe o Excel da Agenda de Atendimento via Power Automate (body binário),
+ * converte pra JSON e salva no Supabase Storage.
  * Substitui: /opt/viana/scripts/upload_agenda.py
- * Agendado via pg_cron: 0 * * * * (toda hora)
  *
- * SETUP NECESSÁRIO (fazer 1x no portal Azure):
- *   Veja: docs/setup-microsoft-graph.md
+ * Fluxo: Power Automate detecta alteração no OneDrive → faz POST aqui com o arquivo
  *
- * Secrets necessários (supabase secrets set):
- *   VIANA_MS_TENANT_ID       — ID do tenant Azure (ex: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
- *   VIANA_MS_CLIENT_ID       — Client ID do app Azure registrado
- *   VIANA_MS_CLIENT_SECRET   — Client Secret do app Azure
- *   VIANA_MS_REFRESH_TOKEN   — Refresh token obtido no setup inicial
- *   VIANA_ONEDRIVE_FILE_PATH — Caminho do Excel no OneDrive (ex: "Agenda/Agenda Viana.xlsx")
+ * Secrets necessários (já configurados):
+ *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -20,11 +15,6 @@ import * as XLSX from 'https://esm.sh/xlsx@0.18.5'
 
 const SUPABASE_URL         = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const MS_TENANT_ID         = Deno.env.get('VIANA_MS_TENANT_ID')!
-const MS_CLIENT_ID         = Deno.env.get('VIANA_MS_CLIENT_ID')!
-const MS_CLIENT_SECRET     = Deno.env.get('VIANA_MS_CLIENT_SECRET')!
-const MS_REFRESH_TOKEN     = Deno.env.get('VIANA_MS_REFRESH_TOKEN')!
-const ONEDRIVE_FILE_PATH   = Deno.env.get('VIANA_ONEDRIVE_FILE_PATH')!
 
 const BUCKET  = 'viana-agenda'
 const ARQUIVO = 'agenda-atual.json'
@@ -33,46 +23,47 @@ function log(msg: string) {
   console.log(`[viana-upload-agenda] ${msg}`)
 }
 
-async function getAccessToken(): Promise<string> {
-  const res = await fetch(
-    `https://login.microsoftonline.com/${MS_TENANT_ID}/oauth2/v2.0/token`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id:     MS_CLIENT_ID,
-        client_secret: MS_CLIENT_SECRET,
-        refresh_token: MS_REFRESH_TOKEN,
-        grant_type:    'refresh_token',
-        scope:         'https://graph.microsoft.com/Files.Read.All offline_access',
-      }),
-    }
-  )
-  if (!res.ok) throw new Error(`Erro ao obter token: ${await res.text()}`)
-  const data = await res.json()
-  return data.access_token as string
-}
-
-async function downloadExcel(token: string): Promise<ArrayBuffer> {
-  // Caminho: /me/drive/root:/PASTA/ARQUIVO.xlsx:/content
-  const encodedPath = encodeURIComponent(ONEDRIVE_FILE_PATH)
-  const url = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodedPath}:/content`
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) throw new Error(`Erro ao baixar Excel: ${res.status} ${await res.text()}`)
-  return res.arrayBuffer()
-}
-
 function parseExcel(buffer: ArrayBuffer): Record<string, unknown>[] {
   const wb = XLSX.read(new Uint8Array(buffer), { type: 'array', cellDates: true })
   const ws = wb.Sheets[wb.SheetNames[0]]
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: null }) as Record<string, any>[]
 
-  return rows
+  // Lê tudo como arrays para encontrar a linha real de cabeçalho
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[][]
+
+  // Detecta a linha de cabeçalho: primeira linha que contém pelo menos 2 dessas palavras-chave
+  const keywords = ['data', 'cod', 'status', 'fornecedor', 'desc', 'mes', 'fluxo', 'prazo']
+  let headerIdx = -1
+  for (let i = 0; i < Math.min(allRows.length, 20); i++) {
+    const row = allRows[i] ?? []
+    const cells = row.map((c: unknown) => String(c ?? '').toLowerCase())
+    const hits = keywords.filter(k => cells.some(c => c.includes(k)))
+    if (hits.length >= 2) { headerIdx = i; break }
+  }
+
+  if (headerIdx === -1) {
+    console.log(`[viana-upload-agenda] cabecalho nao encontrado. Primeiras linhas: ${JSON.stringify(allRows.slice(0, 5))}`)
+    return []
+  }
+
+  const headers = (allRows[headerIdx] as unknown[]).map(h => String(h ?? '').trim())
+  console.log(`[viana-upload-agenda] cabecalho na linha ${headerIdx + 1}: ${headers.join(' | ')}`)
+
+  const dataRows = allRows.slice(headerIdx + 1)
+  // Loga as 3 primeiras linhas de dados para diagnóstico
+  dataRows.slice(0, 3).forEach((row, i) => {
+    const obj: Record<string, unknown> = {}
+    headers.forEach((h, j) => { obj[h] = row[j] ?? null })
+    console.log(`[viana-upload-agenda] linha dados ${i + 1}: ${JSON.stringify(obj)}`)
+  })
+
+  return dataRows
     .map(row => {
-      // Normaliza data — pode vir como Date ou string
+      const r: Record<string, unknown> = {}
+      headers.forEach((h, i) => { r[h] = row[i] ?? null })
+
       let dataStr: string | null = null
-      const rawData = row['DATA'] ?? row['Data'] ?? null
+      const rawData = r['DATA'] ?? r['Data'] ?? r['DT'] ?? r['Dt'] ?? null
       if (rawData instanceof Date) {
         dataStr = rawData.toISOString().slice(0, 10)
       } else if (rawData) {
@@ -80,30 +71,33 @@ function parseExcel(buffer: ArrayBuffer): Record<string, unknown>[] {
       }
 
       return {
-        mes:       row['MES']       ?? row['Mês']        ?? null,
+        mes:       r['MES']        ?? r['Mês']         ?? null,
         data:      dataStr,
-        diaSemana: row['DIA SEM']   ?? row['Dia Sem']    ?? null,
-        cod:       row['COD']       ?? row['Cod']        ?? null,
-        descricao: row['DESC']      ?? row['Fornecedor'] ?? row['FORNECEDOR'] ?? null,
-        fluxo:     row['FLUXO']     ?? row['Fluxo']      ?? null,
-        prazo:     row['PRAZO']     ?? row['Prazo']      ?? null,
-        status:    row['STATUS']    ?? row['Status']     ?? null,
-        comprador: row['COMPRADOR'] ?? row['Comprador']  ?? null,
-        pedido:    row['PEDIDO']    ?? row['Pedido']     ?? null,
+        diaSemana: r['DIA SEMANA'] ?? r['DIA SEM']     ?? r['Dia Sem']    ?? null,
+        cod:       r['COD FORN']   ?? r['COD']          ?? r['Cod']        ?? null,
+        descricao: r['FORNECEDOR'] ?? r['DESC']         ?? r['Fornecedor'] ?? r['DESCRICAO'] ?? null,
+        secao:     r['SECAO']      ?? r['Seção']        ?? r['SECÇÃO']     ?? null,
+        fluxo:     r['FLUXO']      ?? r['Fluxo']        ?? null,
+        prazo:     r['PRAZO']      ?? r['Prazo']        ?? null,
+        status:    r['STATUS']     ?? r['Status']       ?? null,
+        comprador: r['COMPRADOR']  ?? r['Comprador']    ?? null,
+        pedido:    r['PEDIDO']     ?? r['Pedido']       ?? null,
       }
     })
-    .filter(l => l.data || l.cod || l.descricao)
+    .filter(l => l.cod || l.descricao || l.diaSemana)
 }
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
   try {
     log('iniciando...')
 
-    const token = await getAccessToken()
-    log('token Microsoft OK')
+    // Lê o arquivo Excel enviado pelo Power Automate no body da requisição
+    const buffer = await req.arrayBuffer()
+    log(`arquivo recebido: ${buffer.byteLength} bytes`)
 
-    const buffer = await downloadExcel(token)
-    log(`excel baixado: ${buffer.byteLength} bytes`)
+    if (buffer.byteLength < 100) {
+      throw new Error('Body vazio ou muito pequeno — o Power Automate deve enviar o arquivo Excel no body da requisição.')
+    }
 
     const linhas = parseExcel(buffer)
     log(`linhas parseadas: ${linhas.length}`)

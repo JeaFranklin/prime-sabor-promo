@@ -17,7 +17,8 @@ const KENIA               = Deno.env.get('VIANA_WHATSAPP_KENIA') ?? '55639219794
 const BUCKET  = 'viana-agenda'
 const ARQUIVO = 'agenda-atual.json'
 
-const DIAS_SEMANA = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo']
+const DIAS_SEMANA_FMT = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo']
+const DIAS_SEMANA_SEM_ACENTO = ['domingo','segunda','terca','quarta','quinta','sexta','sabado']
 
 const STATUS_EMOJI: Record<string, string> = {
   'COTACAO':         '🟢',
@@ -47,7 +48,8 @@ function formatarMensagem(linhas: Record<string, unknown>[], amanha: Date): stri
   const amanhaStr = amanha.toISOString().slice(0, 10)
   const matches   = linhas.filter(l => ((l.data as string) ?? '').slice(0, 10) === amanhaStr)
   const diaFmt    = `${String(amanha.getDate()).padStart(2,'0')}/${String(amanha.getMonth()+1).padStart(2,'0')}`
-  const diaNome   = DIAS_SEMANA[amanha.getDay() === 0 ? 6 : amanha.getDay() - 1]
+  const idxJS     = amanha.getDay()
+  const diaNome   = DIAS_SEMANA_FMT[idxJS === 0 ? 6 : idxJS - 1]
   const titulo    = `AMANHÃ — ${diaNome} ${diaFmt}`
 
   if (!matches.length) {

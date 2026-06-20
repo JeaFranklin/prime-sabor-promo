@@ -20,7 +20,9 @@ const KENIA                = Deno.env.get('VIANA_WHATSAPP_KENIA') ?? '5563921979
 const BUCKET  = 'viana-agenda'
 const ARQUIVO = 'agenda-atual.json'
 
-const DIAS_SEMANA = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo']
+// Nomes dos dias conforme aparecem no Excel (sem acento, para comparação robusta)
+const DIAS_SEMANA_FMT = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo']
+const DIAS_SEMANA_SEM_ACENTO = ['domingo','segunda','terca','quarta','quinta','sexta','sabado']
 
 const STATUS_EMOJI: Record<string, string> = {
   'COTACAO':         '🟢',
@@ -50,7 +52,8 @@ function formatarMensagem(linhas: Record<string, unknown>[], hoje: Date): string
   const hojeStr = hoje.toISOString().slice(0, 10)
   const matches = linhas.filter(l => ((l.data as string) ?? '').slice(0, 10) === hojeStr)
   const diaFmt  = `${String(hoje.getDate()).padStart(2,'0')}/${String(hoje.getMonth()+1).padStart(2,'0')}`
-  const diaNome = DIAS_SEMANA[hoje.getDay() === 0 ? 6 : hoje.getDay() - 1]
+  const idxJS   = hoje.getDay()
+  const diaNome = DIAS_SEMANA_FMT[idxJS === 0 ? 6 : idxJS - 1]
   const titulo  = `BOM DIA ☀️ — ${diaNome} ${diaFmt}`
 
   if (!matches.length) {

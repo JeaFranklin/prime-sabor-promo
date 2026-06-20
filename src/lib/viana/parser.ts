@@ -24,6 +24,17 @@ export function detectarIntencao(textoOriginal: string): IntentParams {
   // Remove o prefixo "bot" (acionador)
   msg = msg.replace(/^bot\b\s*/, '').trim()
 
+  // Comandos de escrita: status/prazo/fluxo/comprador/pedido CODIGO VALOR
+  const writeMatch = msg.match(/^(status|prazo|fluxo|comprador|pedido)\s+(\S+)\s+(.+)$/)
+  if (writeMatch) {
+    const [, cmd, codigo, valor] = writeMatch
+    const intentMap: Record<string, IntentParams['intent']> = {
+      status: 'set_status', prazo: 'set_prazo', fluxo: 'set_fluxo',
+      comprador: 'set_comprador', pedido: 'set_pedido',
+    }
+    return { intent: intentMap[cmd], codigo: codigo.trim(), valor: valor.trim() } as IntentParams
+  }
+
   if (!msg || /\bajuda\b|\bhelp\b|\bcomando/.test(msg) || msg === '?') {
     return { intent: 'ajuda' }
   }
