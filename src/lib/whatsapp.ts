@@ -28,8 +28,22 @@ let ultimoEnvio = 0
  */
 export function normalizarNumero(raw: string | null | undefined): string | null {
   if (!raw) return null
-  // JID @lid (ex.: "61676435058692@lid"): Evolution usa o JID completo pra rotear
-  if (raw.endsWith('@lid')) return raw
+  // JID @lid: Evolution v1.8.7 não envia pra @lid diretamente.
+  // Resolve via VIANA_LID_MAP (env var com formato "lidId:telefone,lidId2:telefone2").
+  if (raw.endsWith('@lid')) {
+    const lidId = raw.replace(/@lid$/, '')
+    const mapa: Record<string, string> = {}
+    for (const par of (process.env.VIANA_LID_MAP || '').split(',')) {
+      const [lid, num] = par.split(':')
+      if (lid && num) mapa[lid.trim()] = num.trim()
+    }
+    const telefone = mapa[lidId]
+    if (!telefone) {
+      console.warn(`[whatsapp] @lid sem mapeamento em VIANA_LID_MAP: "${lidId}" — configure VIANA_LID_MAP no Vercel`)
+      return null
+    }
+    raw = telefone  // usa o telefone real para enviar
+  }
   let n = raw.replace(/\D/g, '') // remove tudo que não for dígito
   if (!n) return null
   // Se não começar com 55 e tiver 10 ou 11 dígitos (DDD + número), prefixa o 55.
