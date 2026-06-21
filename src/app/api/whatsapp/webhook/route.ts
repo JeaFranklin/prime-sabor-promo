@@ -71,10 +71,13 @@ function extrairTexto(d: WebhookData['data']): string {
   ).toString().trim()
 }
 
-/** Extrai o número de telefone (só dígitos) do JID. */
+/** Extrai o identificador do JID para uso no bot.
+ *  @s.whatsapp.net → só dígitos (ex.: "5563992253618")
+ *  @lid            → JID completo (ex.: "61676435058692@lid") — Evolution precisa do JID inteiro pra rotear
+ */
 function extrairNumero(jid: string | undefined): string | null {
   if (!jid) return null
-  // JID vem como "5563992253618@s.whatsapp.net" ou similar
+  if (jid.endsWith('@lid')) return jid
   const match = jid.match(/^(\d+)@/)
   return match ? match[1] : null
 }

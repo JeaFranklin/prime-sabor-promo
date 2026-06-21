@@ -28,6 +28,8 @@ let ultimoEnvio = 0
  */
 export function normalizarNumero(raw: string | null | undefined): string | null {
   if (!raw) return null
+  // JID @lid (ex.: "61676435058692@lid"): Evolution usa o JID completo pra rotear
+  if (raw.endsWith('@lid')) return raw
   let n = raw.replace(/\D/g, '') // remove tudo que não for dígito
   if (!n) return null
   // Se não começar com 55 e tiver 10 ou 11 dígitos (DDD + número), prefixa o 55.

@@ -16,7 +16,9 @@ export function papelDoNumero(numero: string): PapelUsuario {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-  const variantes = [numero, numero.startsWith('55') ? numero.slice(2) : `55${numero}`]
+  // Remove @lid se presente, aceita com ou sem prefixo 55
+  const numLimpo = numero.replace(/@lid$/, '')
+  const variantes = [numLimpo, numLimpo.startsWith('55') ? numLimpo.slice(2) : `55${numLimpo}`]
   return variantes.some((n) => admins.includes(n)) ? 'admin' : 'readonly'
 }
 

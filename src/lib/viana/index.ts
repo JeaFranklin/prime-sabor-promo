@@ -61,8 +61,9 @@ export function isVianaBotMessage(numero: string | null, texto: string): boolean
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-  // Normaliza: aceita com ou sem prefixo 55 (Evolution pode omitir o DDI)
-  const variantes = [numero, numero.startsWith('55') ? numero.slice(2) : `55${numero}`]
+  // Normaliza: remove @lid se presente, aceita com ou sem prefixo 55
+  const numLimpo = numero.replace(/@lid$/, '')
+  const variantes = [numLimpo, numLimpo.startsWith('55') ? numLimpo.slice(2) : `55${numLimpo}`]
   if (whitelist.length === 0 || !variantes.some((n) => whitelist.includes(n))) return false
   return /^bot\b/i.test(texto.trim())
 }
